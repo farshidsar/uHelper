@@ -80,6 +80,17 @@ systems. Distribution-specific actions may still require manual review.
 
 ## Installation
 
+To use only the script, download it first and then execute it. This lets the portable launcher install missing bootstrap dependencies and restart itself with Bash when necessary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
+chmod +x uHelper.sh
+./uHelper.sh
+```
+
+OR
+
+
 Clone the repository and enter its directory:
 
 ```bash
