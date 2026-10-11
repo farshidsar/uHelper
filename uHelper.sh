@@ -60,6 +60,9 @@ DOCKER_REGISTRY_MIRRORS=(
     "https://mirror-docker.runflare.com"
     "https://registry.docker.ir"
 )
+DOCKER_MIRROR_PROBE_PATH="/v2/"
+DOCKER_MIRROR_TIMEOUT=8
+DOCKER_DAEMON_CONFIG="/etc/docker/daemon.json"
 
 CORE_PACKAGES=(
     curl wget socat ethtool net-tools dnsutils mtr-tiny iperf3 jq bc lsb-release
@@ -91,90 +94,8 @@ APT_MIRRORS=(
     "https://mirrors.tuna.tsinghua.edu.cn/"
 )
 
-# Imported mirror catalog. Only entries compatible with the current operation
-# should be selected by the corresponding feature.
-MIRAVA_MIRROR_CATALOG=(
-    "http://archive.ubuntu.com/ubuntu/"
-    "http://linuxmirrors.ir/pub/ubuntu/"
-    "http://mirror.afranet.com/"
-    "http://mirror.aminidc.com/"
-    "http://mirror.aminidc.com/ubuntu/"
-    "http://mirror.arvancloud.ir/ubuntu/"
-    "http://mirror.asiatech.ir/ubuntu/"
-    "http://mirror.faraso.org/"
-    "http://mirror.faraso.org/ubuntu/"
-    "http://mirror.iranserver.com/ubuntu/"
-    "http://mirror.ut.ac.ir/ubuntu/"
-    "http://mirrors.sharif.ir/ubuntu/"
-    "http://repo.iut.ac.ir/repo/Ubuntu/"
-    "http://ubuntu.byteiran.com/ubuntu/"
-    "https://abrha.net/"
-    "https://afranet.com/"
-    "https://archive.debian.petiak.ir/"
-    "https://archive.ubuntu.petiak.ir/"
-    "https://archive.ubuntu.petiak.ir/ubuntu/"
-    "https://arvancloud.ir/dev/linux-repository/"
-    "https://chat.shhh.ir/dl/"
-    "https://cran.um.ac.ir/"
-    "https://en-mirror.ir/"
-    "https://focker.ir/"
-    "https://ir.archive.ubuntu.com/"
-    "https://ir.archive.ubuntu.com/ubuntu/"
-    "https://ir.centos.sindad.cloud/"
-    "https://ir.epel.sindad.cloud/"
-    "https://ir.ubuntu.sindad.cloud/"
-    "https://ir.ubuntu.sindad.cloud/ubuntu/"
-    "https://jamko.ir/"
-    "https://liara.ir/mirrors/"
-    "https://linux-mirror.liara.ir/"
-    "https://linuxmirrors.ir/"
-    "https://maven.myket.ir/"
-    "https://megan.ir/megan-hub/"
-    "https://mirror.0-1.cloud/"
-    "https://mirror.0-1.cloud/ubuntu/"
-    "https://mirror.0-1.ir/"
-    "https://mirror.aminidc.com/"
-    "https://mirror.arvancloud.ir/"
-    "https://mirror.atlantiscloud.ir/"
-    "https://mirror.digitalvps.ir/ubuntu/"
-    "https://mirror.freedif.org/"
-    "https://mirror.iranserver.com/"
-    "https://mirror.iranserver.com/ubuntu/"
-    "https://mirror.kargadan.ir/"
-    "https://mirror.mobinhost.com/"
-    "https://mirror.nyist.edu.cn/"
-    "https://mirror.parsdev.com/"
-    "https://mirror.rasanegaar.com/"
-    "https://mirror.rasanegar.com/ubuntu/"
-    "https://mirror.shatel.ir/"
-    "https://mirror.yandex.ru/"
-    "https://mirror2.chabokan.net/"
-    "https://mirrors.huaweicloud.com/home/"
-    "https://mirrors.mit.edu/"
-    "https://mirrors.pardisco.co/"
-    "https://mirrors.pardisco.co/ubuntu/"
-    "https://mirrors.tuna.tsinghua.edu.cn/"
-    "https://mirrors.ubuntu.dimit.cloud/"
-    "https://mirrors.ustc.edu.cn/"
-    "https://mvnhub.ir/"
-    "https://parmin.cloud/mirrors.html/"
-    "https://parsdev.com/"
-    "https://repo.abrha.net/"
-    "https://repo.iut.ac.ir/"
-    "https://repo.roomeet.ir/"
-    "https://repo-portal.ito.gov.ir/repo/"
-    "https://runflare.com/mirrors/"
-    "https://taobao.mirrors.alibaba.ir/"
-    "https://ubuntu.bardia.tech/"
-    "https://ubuntu.hostiran.ir/ubuntuarchive/"
-    "https://ubuntu.pars.host/"
-    "https://ubuntu.pishgaman.net/"
-    "https://ubuntu.shatel.ir/ubuntu/"
-    "https://ubuntu-mirror.kimiahost.com/"
-    "https://www.arvancloud.ir/en/dev/linux-repository/"
-    "https://www.arvancloud.ir/fa/dev/docker/"
-)
-
+# Mirava integration uses the live APT_MIRRORS and DOCKER_REGISTRY_MIRRORS
+# arrays above. No legacy static catalog is used at runtime.
 declare -A PACKAGE_COMMANDS=(
     [dnsutils]=dig [net-tools]=ifconfig [mtr-tiny]=mtr
     [netcat-openbsd]=nc [uuid-runtime]=uuidgen
@@ -1000,6 +921,149 @@ EOF
 # --- NEW FUNCTIONS (ADVANCED & WEB TOOLS) ---
 # ###########################################################################
 
+
+docker_mirror_url() {
+    printf '%s' "${1%/}"
+}
+
+test_docker_registry_mirror() {
+    local mirror
+    mirror=$(docker_mirror_url "$1")
+    curl -sS -L -o /dev/null \
+        --connect-timeout "$DOCKER_MIRROR_TIMEOUT" \
+        --max-time "$DOCKER_MIRROR_TIMEOUT" \
+        -w '%{http_code}|%{time_total}|%{time_connect}' \
+        "${mirror}${DOCKER_MIRROR_PROBE_PATH}" 2>/dev/null
+}
+
+docker_registry_probe_is_valid() {
+    local status="$1"
+    [[ "$status" == "200" || "$status" == "401" ]]
+}
+
+apply_docker_registry_mirrors() {
+    local -a mirrors=("$@")
+    ((${#mirrors[@]} > 0)) || {
+        log_message "ERROR" "NO DOCKER REGISTRY MIRRORS WERE PROVIDED."
+        return 1
+    }
+    command_exists python3 || {
+        log_message "ERROR" "PYTHON3 IS REQUIRED TO UPDATE DOCKER DAEMON CONFIGURATION SAFELY."
+        return 1
+    }
+
+    local config_dir config_tmp
+    config_dir=$(dirname "$DOCKER_DAEMON_CONFIG")
+    ensure_directory "$config_dir" || return 1
+    if [[ -f "$DOCKER_DAEMON_CONFIG" ]]; then
+        create_backup "$DOCKER_DAEMON_CONFIG" || return 1
+    fi
+    config_tmp=$(mktemp "${SCRIPT_TMP_DIR:-$SCRIPT_TMP_ROOT}/docker-daemon.XXXXXX") || return 1
+
+    if ! python3 - "$DOCKER_DAEMON_CONFIG" "$config_tmp" "${mirrors[@]}" <<'PY'
+import json
+import os
+import sys
+
+source_path, target_path, *mirrors = sys.argv[1:]
+data = {}
+if os.path.exists(source_path) and os.path.getsize(source_path):
+    with open(source_path, "r", encoding="utf-8") as source:
+        data = json.load(source)
+if not isinstance(data, dict):
+    raise ValueError("Docker daemon configuration must be a JSON object")
+data["registry-mirrors"] = mirrors
+with open(target_path, "w", encoding="utf-8") as target:
+    json.dump(data, target, indent=2)
+    target.write("\n")
+PY
+    then
+        rm -f -- "$config_tmp"
+        log_message "ERROR" "FAILED TO GENERATE VALID DOCKER DAEMON CONFIGURATION."
+        return 1
+    fi
+    chmod 644 "$config_tmp"
+    mv -f -- "$config_tmp" "$DOCKER_DAEMON_CONFIG" || {
+        rm -f -- "$config_tmp"
+        log_message "ERROR" "FAILED TO INSTALL DOCKER DAEMON CONFIGURATION."
+        return 1
+    }
+
+    if command_exists systemctl; then
+        systemctl restart docker || {
+            log_message "ERROR" "DOCKER FAILED TO RESTART AFTER MIRROR CONFIGURATION."
+            return 1
+        }
+    fi
+    if command_exists docker && ! docker info >/dev/null 2>&1; then
+        log_message "ERROR" "DOCKER IS NOT RESPONDING AFTER MIRROR CONFIGURATION."
+        return 1
+    fi
+    log_message "SUCCESS" "DOCKER REGISTRY MIRRORS APPLIED: ${mirrors[*]}"
+}
+
+benchmark_docker_registry_mirrors() {
+    clear_screen
+    log_message "INFO" "--- DOCKER REGISTRY MIRROR BENCHMARK ---"
+    local -a mirrors=()
+    local mirror
+    for mirror in "${DOCKER_REGISTRY_MIRRORS[@]}"; do
+        [[ -n "$mirror" ]] && mirrors+=("$(docker_mirror_url "$mirror")")
+    done
+    ((${#mirrors[@]} > 0)) || {
+        log_message "ERROR" "DOCKER REGISTRY MIRROR LIST IS EMPTY."
+        return 1
+    }
+
+    local result_file="${SCRIPT_TMP_DIR:-$SCRIPT_TMP_ROOT}/docker-mirror-results"
+    : > "$result_file" || return 1
+    printf '%b\n' "${C_CYAN}TESTING ${#mirrors[@]} DOCKER REGISTRY MIRRORS...${C_RESET}"
+    local index
+    for index in "${!mirrors[@]}"; do
+        mirror="${mirrors[index]}"
+        local probe status total connect
+        probe=$(test_docker_registry_mirror "$mirror")
+        IFS='|' read -r status total connect <<< "$probe"
+        if docker_registry_probe_is_valid "$status"; then
+            printf '%s\n' "$total|$connect|$mirror|$status" >> "$result_file"
+            printf '%b' "${C_GREEN}.${C_RESET}"
+        else
+            printf '%b' "${C_RED}x${C_RESET}"
+        fi
+    done
+    printf '\n'
+    if [[ ! -s "$result_file" ]]; then
+        log_message "ERROR" "NO DOCKER REGISTRY MIRROR RESPONDED WITH A VALID REGISTRY STATUS."
+        rm -f -- "$result_file"
+        return 1
+    fi
+
+    mapfile -t DOCKER_MIRROR_RESULTS < <(sort -t'|' -k1,1n -k2,2n "$result_file")
+    rm -f -- "$result_file"
+    printf '\n%-5s %-12s %-12s %-8s %s\n' "RANK" "TOTAL (S)" "CONNECT (S)" "STATUS" "MIRROR"
+    local result rank=1
+    for result in "${DOCKER_MIRROR_RESULTS[@]}"; do
+        IFS='|' read -r total connect mirror status <<< "$result"
+        printf '%-5d %-12s %-12s %-8s %s\n' "$rank" "$total" "$connect" "$status" "$mirror"
+        rank=$((rank + 1))
+    done
+
+    local best
+    IFS='|' read -r total connect best status <<< "${DOCKER_MIRROR_RESULTS[0]}"
+    printf '\n%b\n' "${C_YELLOW}FASTEST MIRROR: ${best} (${total}s)${C_RESET}"
+    local -a ranked_mirrors=()
+    for result in "${DOCKER_MIRROR_RESULTS[@]}"; do
+        IFS='|' read -r total connect mirror status <<< "$result"
+        ranked_mirrors+=("$mirror")
+    done
+    if confirm_action "APPLY FASTEST MIRROR TO DOCKER"; then
+        apply_docker_registry_mirrors "${ranked_mirrors[@]}"
+    else
+        log_message "INFO" "DOCKER REGISTRY MIRROR APPLICATION SKIPPED."
+    fi
+    pause_screen
+}
+
 install_docker_engine() {
     local -a missing=()
     local package
@@ -1028,6 +1092,7 @@ install_docker_engine() {
             log_message "ERROR" "FAILED TO DOWNLOAD DOCKER SIGNING KEY."
             return 1
         }
+
         chmod a+r "$DOCKER_KEYRING"
     fi
 
@@ -1133,8 +1198,9 @@ manage_docker() {
         echo -e "${C_WHITE}THIS MENU PROVIDES THE NECESSARY TOOLS TO MANAGE DOCKER AND ITS CONTAINERS.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL DOCKER & DOCKER-COMPOSE"
         printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "2" "MANAGE CONTAINERS (START, STOP, LOGS)"
-        printf "  ${C_YELLOW}%2d)${C_RED}   %s\n" "3" "PRUNE DOCKER SYSTEM (REMOVE UNUSED CONTAINERS, IMAGES, ETC.)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "4" "RETURN"
+        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "BENCHMARK & APPLY DOCKER REGISTRY MIRROR"
+        printf "  ${C_YELLOW}%2d)${C_RED}   %s\n" "4" "PRUNE DOCKER SYSTEM (REMOVE UNUSED CONTAINERS, IMAGES, ETC.)"
+        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "5" "RETURN"
         echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
         printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
 
@@ -1151,6 +1217,9 @@ manage_docker() {
                 fi
                 ;;
             3)
+                benchmark_docker_registry_mirrors
+                ;;
+            4)
                 if ! command -v docker &>/dev/null; then
                     log_message "ERROR" "DOCKER IS NOT INSTALLED."
                 else
@@ -1166,7 +1235,7 @@ manage_docker() {
                 fi
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
-            4)
+            5)
                 return
                 ;;
             *)
@@ -4294,22 +4363,29 @@ manage_system_tools() {
 
 mirava_mirror_catalog() {
     clear_screen
-    printf '%b\n\n' "${B_CYAN}--- MIRAVA MIRROR CATALOG ---${C_RESET}"
-    printf '%b\n\n' "${C_WHITE}IMPORTED MIRRORS: ${#MIRAVA_MIRROR_CATALOG[@]} | DOCKER REGISTRIES: ${#DOCKER_REGISTRY_MIRRORS[@]}${C_RESET}"
+    printf '%b\n\n' "${B_CYAN}--- MIRAVA INTEGRATED LIVE CATALOG ---${C_RESET}"
+    printf '%b\n\n' "${C_WHITE}CATALOG SOURCES ARE THE CURRENT UHELPER CONFIGURATION, NOT A STATIC LEGACY LIST.${C_RESET}"
     local index
-    for index in "${!MIRAVA_MIRROR_CATALOG[@]}"; do
+    printf '%b\n' "${C_YELLOW}CURRENT APT/UBUNTU MIRRORS (${#APT_MIRRORS[@]}):${C_RESET}"
+    for index in "${!APT_MIRRORS[@]}"; do
         printf "  ${C_YELLOW}%3d)${C_WHITE} %s\n" \
-            "$((index + 1))" "${MIRAVA_MIRROR_CATALOG[index]}"
+            "$((index + 1))" "${APT_MIRRORS[index]}"
     done
-    read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
+    printf '\n%b\n' "${C_YELLOW}CURRENT DOCKER REGISTRY MIRRORS (${#DOCKER_REGISTRY_MIRRORS[@]}):${C_RESET}"
+    for index in "${!DOCKER_REGISTRY_MIRRORS[@]}"; do
+        printf "  ${C_YELLOW}%3d)${C_WHITE} %s\n" \
+            "$((index + 1))" "${DOCKER_REGISTRY_MIRRORS[index]}"
+    done
+    pause_screen
 }
 
 mirava_mirror_tools() {
     run_menu "MIRAVA FEATURES (INTEGRATED)" \
         "MIRAVA CAPABILITIES REUSED THROUGH UHELPER'S NATIVE SERVICES." \
         "BENCHMARK & APPLY FASTEST UBUNTU APT MIRROR" advanced_mirror_test \
+        "BENCHMARK & APPLY FASTEST DOCKER REGISTRY MIRROR" benchmark_docker_registry_mirrors \
         "BENCHMARK LOCAL/GLOBAL DNS" manage_dns \
-        "VIEW IMPORTED MIRROR/DNS/DOCKER CATALOG" mirava_mirror_catalog \
+        "VIEW CURRENT MIRROR/DNS/DOCKER CATALOG" mirava_mirror_catalog \
         "INSTALL ALL REQUIRED PACKAGES" install_dependencies \
         "INSTALL DOCKER & DOCKER COMPOSE" manage_docker \
         "RETURN TO NETWORK MENU" __return__
