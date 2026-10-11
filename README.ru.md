@@ -36,6 +36,12 @@ uHelper — интерактивный Bash-инструмент для адми
 package manager.
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
+chmod +x uHelper.sh
+./uHelper.sh
+```
+Или
+```bash
 git clone https://github.com/farshidsar/uHelper.git
 cd uHelper
 chmod +x uHelper.sh
