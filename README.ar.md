@@ -32,6 +32,13 @@ uHelper هي أداة Bash تفاعلية لإدارة خوادم Ubuntu. تجم
 
 يوصى باستخدام Ubuntu 20.04 أو أحدث مع Bash 4+ وصلاحيات root واتصال إنترنت.
 
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
+chmod +x uHelper.sh
+./uHelper.sh
+```
+أو
 ```bash
 git clone https://github.com/farshidsar/uHelper.git
 cd uHelper
