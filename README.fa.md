@@ -39,6 +39,15 @@ Compose، ابزارهای امنیتی و نگهداری سرور را یکپا
 
 ## نصب و اجرا
 
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
+chmod +x uHelper.sh
+./uHelper.sh
+```
+
+یا
+
 ```bash
 git clone https://github.com/farshidsar/uHelper.git
 cd uHelper
