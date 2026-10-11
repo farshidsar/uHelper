@@ -32,6 +32,13 @@ uHelper 是一个面向 Ubuntu 服务器的交互式 Bash 工具，整合了 DNS
 
 建议使用 Ubuntu 20.04 或更新版本、Bash 4+、root 权限、互联网和可用的软件包管理器。
 
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
+chmod +x uHelper.sh
+./uHelper.sh
+```
+或者
 ```bash
 git clone https://github.com/farshidsar/uHelper.git
 cd uHelper
