@@ -13,19 +13,19 @@ setup() {
 teardown() { rm -rf "$TMP"; }
 
 @test "help is non-interactive" {
-    run "$ROOT/uHelper.sh" --help
+    run bash "$ROOT/uHelper.sh" --help
     [ "$status" -eq 0 ]
     [[ "$output" == *"--dry-run"* ]]
 }
 
 @test "dry-run mirror checks emit operation ids" {
-    run "$ROOT/uHelper.sh" --dry-run --non-interactive --check-mirrors https://mirror.example/ubuntu/
+    run bash "$ROOT/uHelper.sh" --dry-run --non-interactive --check-mirrors https://mirror.example/ubuntu/
     [ "$status" -eq 0 ]
     [[ "$output" == *"operation_id"* ]]
 }
 
 @test "mocked mirror checks write the catalog schema" {
-    PATH="$TMP/bin:$PATH" run "$ROOT/uHelper.sh" --non-interactive \
+    PATH="$TMP/bin:$PATH" run bash "$ROOT/uHelper.sh" --non-interactive \
         --check-mirrors https://mirror.example/ubuntu/
     [ "$status" -eq 0 ]
     [ -s "$UH_MIRROR_CATALOG" ]
