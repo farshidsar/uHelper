@@ -207,23 +207,29 @@ display. The original Mirava files are not required at runtime.
 
 ## Development roadmap
 
-Planned improvements are intentionally focused on reliability and safe
-operations:
+The first reliability and automation milestone is implemented on the
+`feature/modular-automation-observability` branch:
 
-1. Split the monolithic Bash file into testable modules while preserving the
-   one-file portable launcher.
-2. Add non-interactive flags and a dry-run mode for automation and CI.
-3. Add structured JSON logging, operation IDs, and clearer failure reports.
-4. Add a real mirror catalog schema with freshness checks, region metadata,
-   package type, TLS validation, and automatic stale-entry removal.
-5. Improve Docker mirror verification with pull tests, daemon configuration
-   validation, rollback, and systemd health checks.
-6. Add shellcheck, bats-core tests, CI syntax checks, and mocked package/network
-   integration tests.
-7. Add privilege-aware support for Ubuntu/Debian first, then document tested
-   Fedora/RHEL/Alpine behavior instead of implying full portability.
+1. **Completed:** Split the new automation paths into testable modules while
+   preserving the one-file portable launcher.
+2. **Completed:** Add non-interactive flags and a dry-run mode for automation
+   and CI.
+3. **Completed:** Add structured JSON logging, operation IDs, and explicit
+   failure reports.
+4. **Completed:** Add a JSON Lines mirror catalog with freshness checks, region
+   metadata, package type, TLS validation, and stale-entry removal.
+5. **Completed:** Improve Docker mirror verification with pull tests, daemon
+   configuration validation, backup/rollback, and systemd health checks.
+6. **Completed:** Add ShellCheck, Bats tests, Bash syntax checks, CI, and
+   mocked network integration coverage.
+7. **Completed (baseline):** Add privilege-aware guards for system-changing
+   automation, support Ubuntu/Debian first, and explicitly report
+   Fedora/RHEL/Alpine as documented but not fully supported.
+
+Remaining roadmap:
+
 8. Add configuration import/export, versioned backups, and transactional
-   rollback for DNS, APT, Docker, firewall, and SSH changes.
+   rollback for DNS, APT, firewall, and SSH changes.
 9. Add localization infrastructure so menu text and README terminology stay
    synchronized.
 10. Add release tags, checksums, signed releases, and a changelog.
