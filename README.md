@@ -9,6 +9,7 @@ repository/mirror testing, and common server maintenance tasks.
 - Author: [farshidsar](https://github.com/farshidsar)
 - Repository: [github.com/farshidsar/uHelper](https://github.com/farshidsar/uHelper)
 - Main script: [`uHelper.sh`](./uHelper.sh)
+- Modular automation library: [`lib/`](./lib/)
 - Languages: [فارسی](./README.fa.md) · [العربية](./README.ar.md) · [Русский](./README.ru.md) · [简体中文](./README.zh-CN.md)
 
 > **Important:** This script changes system networking, package, firewall, DNS,
@@ -206,23 +207,29 @@ display. The original Mirava files are not required at runtime.
 
 ## Development roadmap
 
-Planned improvements are intentionally focused on reliability and safe
-operations:
+The first reliability and automation milestone is implemented on the
+`feature/modular-automation-observability` branch:
 
-1. Split the monolithic Bash file into testable modules while preserving the
-   one-file portable launcher.
-2. Add non-interactive flags and a dry-run mode for automation and CI.
-3. Add structured JSON logging, operation IDs, and clearer failure reports.
-4. Add a real mirror catalog schema with freshness checks, region metadata,
-   package type, TLS validation, and automatic stale-entry removal.
-5. Improve Docker mirror verification with pull tests, daemon configuration
-   validation, rollback, and systemd health checks.
-6. Add shellcheck, bats-core tests, CI syntax checks, and mocked package/network
-   integration tests.
-7. Add privilege-aware support for Ubuntu/Debian first, then document tested
-   Fedora/RHEL/Alpine behavior instead of implying full portability.
+1. **Completed:** Split the new automation paths into testable modules while
+   preserving the one-file portable launcher.
+2. **Completed:** Add non-interactive flags and a dry-run mode for automation
+   and CI.
+3. **Completed:** Add structured JSON logging, operation IDs, and explicit
+   failure reports.
+4. **Completed:** Add a JSON Lines mirror catalog with freshness checks, region
+   metadata, package type, TLS validation, and stale-entry removal.
+5. **Completed:** Improve Docker mirror verification with pull tests, daemon
+   configuration validation, backup/rollback, and systemd health checks.
+6. **Completed:** Add ShellCheck, Bats tests, Bash syntax checks, CI, and
+   mocked network integration coverage.
+7. **Completed (baseline):** Add privilege-aware guards for system-changing
+   automation, support Ubuntu/Debian first, and explicitly report
+   Fedora/RHEL/Alpine as documented but not fully supported.
+
+Remaining roadmap:
+
 8. Add configuration import/export, versioned backups, and transactional
-   rollback for DNS, APT, Docker, firewall, and SSH changes.
+   rollback for DNS, APT, firewall, and SSH changes.
 9. Add localization infrastructure so menu text and README terminology stay
    synchronized.
 10. Add release tags, checksums, signed releases, and a changelog.
@@ -242,6 +249,37 @@ Source-only smoke test:
 
 ```bash
 bash -c 'source ./uHelper.sh; package_command dnsutils; command_exists bash'
+```
+
+### Automation and CI mode
+
+The interactive menu remains available, while automation can use the
+non-interactive modular CLI:
+
+```bash
+bash uHelper.sh --dry-run --non-interactive --log-format json \
+  --operation-id mirror-check --check-mirrors \
+  https://archive.ubuntu.com/ubuntu/
+```
+
+Available operations include `--check-mirrors`, `--prune-mirrors`, and
+`--docker-mirrors`. Mirror records are stored as JSON Lines with URL, region,
+package type, TLS status, and freshness timestamps. Stale records are removed
+by `--prune-mirrors`. Docker updates validate `daemon.json`, back it up, check
+systemd health, run a pull test, and roll back on failure.
+
+The launcher remains usable as a portable one-file interactive script when the
+optional `lib/` directory is not present. The modular CLI requires Bash and
+`curl`; `jq` is recommended for strict Docker JSON validation.
+
+Ubuntu and Debian are the supported platforms for system-changing operations.
+Fedora/RHEL and Alpine are detected and reported as documented-but-not-fully-
+supported targets rather than being presented as fully portable.
+
+```bash
+bash -n uHelper.sh lib/*.sh
+shellcheck lib/*.sh
+bats tests/bats
 ```
 
 ## Contributing
