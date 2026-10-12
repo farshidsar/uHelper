@@ -1,11 +1,7 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# CHECK FOR ROOT USER
-if [ "$(id -u)" -ne 0 ]; then
-  echo "THIS SCRIPT MUST BE RUN WITH ROOT PRIVILEGES."
-  echo "PLEASE USE THE COMMAND 'sudo bash MENU-EN.sh'."
-  exit 1
-fi
+# This script intentionally avoids `set -e`: most menu actions are optional and
+# report their own failures. `set -u` is also not safe for legacy menu inputs.
 
 # --- START: UNIFIED ROBUST COLOR PALETTE ---
 C_RESET=$'\e[0m'
@@ -20,33 +16,217 @@ B_BLUE=$'\e[1;34m'
 B_MAGENTA=$'\e[1;35m'
 B_CYAN=$'\e[1;36m'
 B_YELLOW=$'\e[1;33m'
-R=$'\e[0;31m'
-G=$'\e[0;32m'
-Y=$'\e[0;33m'
-B=$'\e[0;34m'
-C=$'\e[0;36m'
-W=$'\e[1;37m'
-D=$'\e[0;90m'
-N=$'\e[0m'
-P=$'\e[1;35m'
-# --- END: UNIFIED ROBUST COLOR PALETTE ---
+B_GREEN=$'\e[1;32m'
+B_WHITE=$'\e[1;37m'
 
+# Short names are retained because the existing feature functions use them.
+R="$C_RED" G="$C_GREEN" Y="$C_YELLOW" B="$C_BLUE"
+C="$C_CYAN" W=$'\e[1;37m' D=$'\e[0;90m' N="$C_RESET" P=$'\e[1;35m'
 # #############################################################################
 # --- START OF CORE FRAMEWORK ---
 # #############################################################################
 
-readonly LOG_FILE="/var/log/network_optimizer.log"
-readonly BACKUP_DIR="/var/backups/network_optimizer"
-readonly CONFIG_DIR="/etc/irnet" # DIRECTORY FOR PERSISTENT CONFIGS
-readonly TARGET_DNS=("9.9.9.9" "149.112.112.112")
-readonly MIN_MTU=576
-readonly MAX_MTU=9000
+LOG_FILE="/var/log/network_optimizer.log"
+BACKUP_DIR="/var/backups/network_optimizer"
+CONFIG_DIR="/etc/irnet" # DIRECTORY FOR PERSISTENT CONFIGS
+TARGET_DNS=("9.9.9.9" "149.112.112.112")
+MIN_MTU=576
+MAX_MTU=9000
+SCRIPT_TMP_ROOT="${TMPDIR:-/tmp}"
+PROJECT_NAME="uHelper"
+PROJECT_DESCRIPTION="Ubuntu System and Network Administration Toolkit"
+PROJECT_GITHUB_URL="https://github.com/farshidsar/uHelper"
+PROJECT_AUTHOR="farshidsar"
+
+# ============================================================================
+# USER CONFIGURATION
+# Edit this section to change package groups, DNS providers, and repositories.
+# ============================================================================
+AUTO_INSTALL_DOCKER=1
+DOCKER_REPOSITORY_URL="https://download.docker.com/linux/ubuntu"
+DOCKER_GPG_URL="${DOCKER_REPOSITORY_URL}/gpg"
+DOCKER_KEYRING="/etc/apt/keyrings/docker.asc"
+DOCKER_SOURCE_FILE="/etc/apt/sources.list.d/docker.list"
+DOCKER_PACKAGES=(
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+)
+DOCKER_REGISTRY_MIRRORS=(
+    "https://docker.mobinhost.com"
+    "https://docker.arvancloud.ir"
+    "https://focker.ir"
+    "https://docker.iranrepo.ir"
+    "https://docker.iranserver.com"
+    "https://docker.kernel.ir"
+    "https://mirror-docker.runflare.com"
+    "https://registry.docker.ir"
+)
+DOCKER_MIRROR_PROBE_PATH="/v2/"
+DOCKER_MIRROR_TIMEOUT=8
+DOCKER_DAEMON_CONFIG="/etc/docker/daemon.json"
+
+CORE_PACKAGES=(
+    curl wget socat ethtool net-tools dnsutils mtr-tiny iperf3 jq bc lsb-release
+    netcat-openbsd nmap fping uuid-runtime iptables-persistent python3 python3-pip
+    fail2ban chkrootkit unzip rkhunter lynis htop btop ncdu iftop git certbot
+    xtables-addons-common geoip-database gnupg
+)
+
+# These are tested by advanced_mirror_test. Keep URLs rooted at Ubuntu archive.
+APT_MIRRORS=(
+    "https://mirrors.pardisco.co/ubuntu/"
+    "http://mirror.aminidc.com/ubuntu/"
+    "http://mirror.faraso.org/ubuntu/"
+    "https://ir.ubuntu.sindad.cloud/ubuntu/"
+    "https://ubuntu-mirror.kimiahost.com/"
+    "https://ubuntu.hostiran.ir/ubuntuarchive/"
+    "https://ubuntu.bardia.tech/"
+    "https://mirror.iranserver.com/ubuntu/"
+    "https://ir.archive.ubuntu.com/ubuntu/"
+    "https://mirror.0-1.cloud/ubuntu/"
+    "http://linuxmirrors.ir/pub/ubuntu/"
+    "https://ubuntu.shatel.ir/ubuntu/"
+    "http://repo.iut.ac.ir/repo/Ubuntu/"
+    "http://archive.ubuntu.com/ubuntu/"
+    "https://ubuntu.pishgaman.net/"
+    "https://mirror.yandex.ru/"
+    "https://mirrors.ustc.edu.cn/"
+    "https://mirrors.huaweicloud.com/"
+    "https://mirrors.tuna.tsinghua.edu.cn/"
+)
+
+# Mirava integration uses the live APT_MIRRORS and DOCKER_REGISTRY_MIRRORS
+# arrays above. No legacy static catalog is used at runtime.
+declare -A PACKAGE_COMMANDS=(
+    [dnsutils]=dig [net-tools]=ifconfig [mtr-tiny]=mtr
+    [netcat-openbsd]=nc [uuid-runtime]=uuidgen
+    [iptables-persistent]=netfilter-persistent
+    [xtables-addons-common]=xtables-addons-info
+    [python3-pip]=pip3 [docker-ce]=docker [docker-compose-plugin]=docker
+)
+
+DNS_SWITCHER_PROVIDERS=(
+    "Shecan" "Radar" "Electro" "Begzar" "DNS Pro" "DynX" "403"
+    "Google" "Cloudflare" "Quad9" "TCI" "Custom2" "ZirSakht" "ZiTel"
+    "Irancell" "MCI" "Rightel" "Asiatech" "ShatelMobile" "IROST"
+    "Teh-Uni" "OpenDNS" "AdGuard DNS" "DNS.WATCH" "Reset to Default"
+)
+declare -A DNS_SWITCHER_SERVERS=(
+    [Shecan]="178.22.122.100 185.51.200.2"
+    [Radar]="10.202.10.10 10.202.10.11"
+    [Electro]="78.157.42.100 78.157.42.101"
+    [Begzar]="185.55.226.26 185.55.225.25"
+    [DNS\ Pro]="87.107.110.109 87.107.110.110"
+    [DynX]="10.70.95.150 10.70.95.162"
+    [403]="10.202.10.202 10.202.10.102"
+    [Google]="8.8.8.8 8.8.4.4"
+    [Cloudflare]="1.1.1.1 1.0.0.1"
+    [Quad9]="9.9.9.9 149.112.112.112"
+    [TCI]="217.218.155.155 217.218.127.127"
+    [Custom2]="185.186.50.44 5.200.200.200"
+    [ZirSakht]="2.188.21.130 2.188.21.46"
+    [ZiTel]="208.67.222.222 208.67.220.220"
+    [Irancell]="109.69.8.51 1.1.1.1"
+    [MCI]="208.67.220.200 208.67.222.222"
+    [Rightel]="91.239.100.100 89.233.43.71"
+    [Asiatech]="194.36.174.161 178.22.122.100"
+    [ShatelMobile]="91.239.100.100 89.233.43.71"
+    [IROST]="213.176.123.5 1.1.1.1"
+    [Teh-Uni]="31.24.234.37 1.1.1.1"
+    [OpenDNS]="208.67.222.222 208.67.220.220"
+    [AdGuard\ DNS]="94.140.14.14 94.140.15.15"
+    [DNS.WATCH]="84.200.69.80 84.200.70.40"
+    [Reset\ to\ Default]="127.0.0.53"
+)
 
 declare -g SYSTEM_CPU_CORES
 declare -g SYSTEM_TOTAL_RAM
 declare -g SYSTEM_OPTIMAL_BACKLOG
 declare -g SYSTEM_OPTIMAL_MEM
 declare -g PRIMARY_INTERFACE
+declare -g SCRIPT_TMP_DIR=""
+declare -g ENVIRONMENT_INITIALIZED=0
+declare -g PACKAGE_MANAGER=""
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+clear_screen() {
+    command_exists clear && clear || printf '\033c'
+}
+
+pause_screen() {
+    local prompt="${1:-PRESS ANY KEY TO CONTINUE...}"
+    read -n 1 -s -r -p $'\n'"${R}${prompt}${N}" || true
+    printf '\n'
+}
+
+read_choice() {
+    local __result="$1"
+    local prompt="$2"
+    local value=""
+    if ! read -e -r -p "${prompt}" value; then
+        return 1
+    fi
+    printf -v "$__result" '%s' "$value"
+}
+
+confirm_action() {
+    local prompt="$1"
+    local answer
+    read_choice answer "${prompt} (Y/N): " || return 1
+    [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+confirm_installation() {
+    local prompt="$1"
+    local answer
+    read_choice answer "${prompt} (Y/n): " || return 1
+    [[ -z "$answer" || "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
+detect_package_manager() {
+    if command_exists apt-get; then
+        PACKAGE_MANAGER="apt"
+    elif command_exists dnf; then
+        PACKAGE_MANAGER="dnf"
+    elif command_exists yum; then
+        PACKAGE_MANAGER="yum"
+    elif command_exists apk; then
+        PACKAGE_MANAGER="apk"
+    else
+        PACKAGE_MANAGER=""
+    fi
+    [[ -n "$PACKAGE_MANAGER" ]]
+}
+
+refresh_package_indexes() {
+    case "${PACKAGE_MANAGER:-}" in
+        apt) apt-get update -qq ;;
+        dnf) dnf makecache -q ;;
+        yum) yum makecache -q ;;
+        apk) apk update ;;
+        *) log_message "ERROR" "NO SUPPORTED PACKAGE MANAGER WAS DETECTED."; return 1 ;;
+    esac
+}
+
+install_packages() {
+    local -a packages=("$@")
+    ((${#packages[@]} > 0)) || return 0
+    wait_for_dpkg_lock || return 1
+    case "${PACKAGE_MANAGER:-}" in
+        apt)
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+                --no-install-recommends \
+                -o Dpkg::Options::="--force-confdef" \
+                -o Dpkg::Options::="--force-confold" "${packages[@]}"
+            ;;
+        dnf) dnf install -y -q "${packages[@]}" ;;
+        yum) yum install -y -q "${packages[@]}" ;;
+        apk) apk add --no-cache "${packages[@]}" ;;
+        *) log_message "ERROR" "CANNOT INSTALL PACKAGES WITHOUT A SUPPORTED PACKAGE MANAGER."; return 1 ;;
+    esac
+}
 
 log_message() {
     local level="$1"
@@ -60,10 +240,24 @@ log_message() {
         SUCCESS) color="$C_GREEN" ;;
         *) color="$C_RESET" ;;
     esac
-    # CONVERT MESSAGE TO UPPERCASE
-    local upper_message="${message^^}"
-    local log_line="[$timestamp] [$level] $upper_message"
-    printf "%s%s%s\n" "$color" "$log_line" "$C_RESET" | tee -a "$LOG_FILE"
+    local log_line="[$timestamp] [$level] $message"
+    # Log output goes to stderr so command substitutions receive only data.
+    printf "%s%s%s\n" "$color" "$log_line" "$C_RESET" | tee -a "$LOG_FILE" >&2
+}
+
+require_root() {
+    if [[ "$(id -u)" -ne 0 ]]; then
+        printf '%s\n' \
+            "THIS SCRIPT MUST BE RUN WITH ROOT PRIVILEGES." \
+            "PLEASE USE: sudo bash uHelper.sh." >&2
+        return 1
+    fi
+}
+
+cleanup_temp_files() {
+    if [[ -n "$SCRIPT_TMP_DIR" && -d "$SCRIPT_TMP_DIR" ]]; then
+        rm -rf -- "$SCRIPT_TMP_DIR"
+    fi
 }
 
 create_backup() {
@@ -72,11 +266,15 @@ create_backup() {
         log_message "INFO" "FILE $file_path NOT FOUND FOR BACKUP, SKIPPING."
         return 1
     fi
+    if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+        log_message "ERROR" "FAILED TO CREATE BACKUP DIRECTORY '$BACKUP_DIR'."
+        return 1
+    fi
     local backup_name
     printf -v backup_name '%s.bak.%(%s)T' "$(basename "$file_path")" -1
     if cp -f "$file_path" "$BACKUP_DIR/$backup_name" 2>/dev/null; then
         log_message "SUCCESS" "BACKUP OF $file_path CREATED AT $BACKUP_DIR/$backup_name."
-        echo "$BACKUP_DIR/$backup_name"
+        printf '%s\n' "$BACKUP_DIR/$backup_name"
         return 0
     else
         log_message "ERROR" "BACKUP FAILED FOR $file_path."
@@ -87,6 +285,13 @@ create_backup() {
 restore_backup() {
     local original_file="$1"
     local backup_file="$2"
+    if [[ ! -f "$backup_file" ]]; then
+        log_message "ERROR" "BACKUP FILE '$backup_file' DOES NOT EXIST."
+        return 1
+    fi
+    if [[ ! -e "$original_file" ]]; then
+        log_message "WARN" "ORIGINAL FILE '$original_file' DOES NOT EXIST; IT WILL BE CREATED."
+    fi
     if cp -f "$backup_file" "$original_file" 2>/dev/null; then
         log_message "SUCCESS" "FILE $original_file RESTORED FROM BACKUP."
         return 0
@@ -94,6 +299,36 @@ restore_backup() {
         log_message "ERROR" "FAILED TO RESTORE FROM BACKUP."
         return 1
     fi
+}
+
+write_atomic() {
+    local destination="$1"
+    local temporary
+    temporary=$(mktemp "${destination}.uhelper.XXXXXX") || {
+        log_message "ERROR" "FAILED TO CREATE TEMPORARY FILE FOR '$destination'."
+        return 1
+    }
+    if ! cat > "$temporary"; then
+        rm -f -- "$temporary"
+        log_message "ERROR" "FAILED TO WRITE TEMPORARY FILE FOR '$destination'."
+        return 1
+    fi
+    if ! chmod --reference="$destination" "$temporary" 2>/dev/null; then
+        chmod 644 "$temporary" 2>/dev/null || true
+    fi
+    if ! mv -f -- "$temporary" "$destination"; then
+        rm -f -- "$temporary"
+        log_message "ERROR" "FAILED TO REPLACE '$destination'."
+        return 1
+    fi
+}
+
+ensure_directory() {
+    local directory="$1"
+    mkdir -p -- "$directory" 2>/dev/null || {
+        log_message "ERROR" "FAILED TO CREATE DIRECTORY '$directory'."
+        return 1
+    }
 }
 
 check_service_status() {
@@ -107,44 +342,54 @@ check_service_status() {
 
 handle_interrupt() {
     log_message "WARN" "SCRIPT INTERRUPTED. CLEANING UP..."
-    stty sane # RESTORE TERMINAL SETTINGS ON EXIT
-    local pids
-    pids=$(jobs -p 2>/dev/null)
-    if [[ -n "$pids" ]]; then
-        echo "$pids" | xargs -r kill -TERM 2>/dev/null || true
-        sleep 1
-        echo "$pids" | xargs -r kill -KILL 2>/dev/null || true
-    fi
-    rm -f /tmp/setup_*.sh /tmp/dns_test_$$_* /tmp/conn_test_$$_* /tmp/mirror_speeds_$$ 2>/dev/null
+    stty sane 2>/dev/null || true
+    local pid
+    while read -r pid; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done < <(jobs -pr)
+    sleep 1
     exit 130
 }
 
 init_environment() {
+    if (( ENVIRONMENT_INITIALIZED == 1 )); then
+        return 0
+    fi
     export LC_ALL=C
     export LANG=C
     export DEBIAN_FRONTEND=noninteractive
     export APT_LISTCHANGES_FRONTEND=none
 
-    mkdir -p "$BACKUP_DIR" "$(dirname "$LOG_FILE")" "$CONFIG_DIR" 2>/dev/null
+    mkdir -p "$BACKUP_DIR" "$(dirname "$LOG_FILE")" "$CONFIG_DIR" 2>/dev/null || {
+        printf 'Failed to initialize application directories.\n' >&2
+        return 1
+    }
+    SCRIPT_TMP_DIR=$(mktemp -d "$SCRIPT_TMP_ROOT/uhelper.XXXXXX") || {
+        printf 'Failed to create a temporary working directory.\n' >&2
+        return 1
+    }
     chmod 700 "$BACKUP_DIR" "$CONFIG_DIR" 2>/dev/null
     : >> "$LOG_FILE"
     chmod 640 "$LOG_FILE" 2>/dev/null
 
     trap 'handle_interrupt' INT TERM
+    trap 'cleanup_temp_files' EXIT
 
-    PRIMARY_INTERFACE=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
+    PRIMARY_INTERFACE=$(ip -4 route show default 2>/dev/null |
+        awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+    detect_package_manager || true
+    ENVIRONMENT_INITIALIZED=1
 }
 # #############################################################################
 # --- END OF CORE FRAMEWORK ---
 # #############################################################################
 # --- HEADER AND BANNER ---
 show_banner() {
-    echo -e "${B_BLUE}║${B_CYAN}  COMPREHENSIVE LINUX (UBUNTU) OPTIMIZATION SUITE${B_BLUE}   ${C_RESET}"
-    echo -e "${B_BLUE}╠══════════════════════════════════════════════════════════════╣${C_RESET}"
-    echo -e "${B_BLUE}║ ${C_WHITE}CREATED BY: AMIR ALI KARBALAEE${B_BLUE}   |   ${C_WHITE}TELEGRAM: T.ME/CY3ER${B_BLUE}      ║${C_RESET}"
-    echo -e "${B_BLUE}║ ${C_WHITE}COLLABORATOR: FREAK${B_BLUE}              |   ${C_WHITE}TELEGRAM: T.ME/FREAK_4L${B_BLUE}   ║${C_RESET}"
-    echo -e "${B_BLUE}║ ${C_WHITE}COLLABORATOR: IRCF-SPACE${B_BLUE}         |   ${C_WHITE}TELEGRAM: T.ME/IRCFSPACE${B_BLUE}  ║${C_RESET}"
-    echo -e "${B_BLUE}╚══════════════════════════════════════════════════════════════╝${C_RESET}"
+    printf '%b\n' "${B_BLUE}+------------------------------------------------------------+${C_RESET}"
+    printf '%b\n' "${B_BLUE}| ${B_CYAN}${PROJECT_NAME} - ${PROJECT_DESCRIPTION}${B_BLUE} |${C_RESET}"
+    printf '%b\n' "${B_BLUE}| ${C_WHITE}Author: ${PROJECT_AUTHOR}${B_BLUE}                                      |${C_RESET}"
+    printf '%b\n' "${B_BLUE}| ${C_WHITE}GitHub: ${PROJECT_GITHUB_URL}${B_BLUE}                    |${C_RESET}"
+    printf '%b\n' "${B_BLUE}+------------------------------------------------------------+${C_RESET}"
     echo ""
 }
 
@@ -201,11 +446,27 @@ check_ping_status() {
 
 is_valid_ip() {
     local ip="$1"
-    if [[ "$ip" =~ ^([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}$ || "$ip" =~ ^(([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])) || "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    if [[ "$ip" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
+        local -a octets
+        local octet
+        IFS='.' read -r -a octets <<< "$ip"
+        for octet in "${octets[@]}"; do
+            [[ "$octet" =~ ^[0-9]+$ ]] || return 1
+            (( 10#$octet <= 255 )) || return 1
+        done
         return 0
-    else
-        return 1
     fi
+
+    [[ "$ip" == *:* ]] || return 1
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import ipaddress, sys; ipaddress.ip_address(sys.argv[1])' "$ip" \
+            >/dev/null 2>&1
+        return $?
+    fi
+
+    # IPv6 validation is delegated to Python when available. Do not accept
+    # arbitrary colon-containing input when the validator is unavailable.
+    return 1
 }
 # --- SYSTEM STATUS ---
 show_enhanced_system_status() {
@@ -216,27 +477,41 @@ show_enhanced_system_status() {
     }
 
     # --- START: PARALLEL NETWORK CHECKS WITH LOCAL FALLBACK ---
-    local TMP_IPV4="/tmp/public_ipv4_$$"
-    local TMP_IPV6="/tmp/public_ipv6_$$"
-    local TMP_ISP="/tmp/public_isp_$$"
+    local tmp_ipv4="$SCRIPT_TMP_DIR/public_ipv4"
+    local tmp_ipv6="$SCRIPT_TMP_DIR/public_ipv6"
+    local tmp_isp="$SCRIPT_TMP_DIR/public_isp"
+    local -a network_pids=()
     
     # RUN NETWORK CHECKS IN THE BACKGROUND SIMULTANEOUSLY
-    curl -s -4 --connect-timeout 3 ip.sb > "$TMP_IPV4" &
-    curl -s -6 --connect-timeout 3 ip.sb > "$TMP_IPV6" &
-    curl -s -4 --connect-timeout 3 ip.sb/isp > "$TMP_ISP" &
+    if command_exists curl; then
+        curl -fsSL -4 --retry 2 --connect-timeout 3 --max-time 8 \
+            https://ip.sb > "$tmp_ipv4" 2>/dev/null &
+        network_pids+=("$!")
+        curl -fsSL -6 --retry 2 --connect-timeout 3 --max-time 8 \
+            https://ip.sb > "$tmp_ipv6" 2>/dev/null &
+        network_pids+=("$!")
+        curl -fsSL -4 --retry 2 --connect-timeout 3 --max-time 8 \
+            https://ip.sb/isp > "$tmp_isp" 2>/dev/null &
+        network_pids+=("$!")
+    else
+        : > "$tmp_ipv4"
+        : > "$tmp_ipv6"
+        : > "$tmp_isp"
+        log_message "WARN" "CURL IS NOT INSTALLED; USING LOCAL NETWORK STATUS FALLBACK."
+    fi
 
     # WAIT FOR ALL BACKGROUND JOBS TO COMPLETE
-    wait
+    local network_pid
+    for network_pid in "${network_pids[@]}"; do
+        wait "$network_pid" 2>/dev/null || true
+    done
     
     local public_ipv4
-    public_ipv4=$(cat "$TMP_IPV4")
+    public_ipv4=$(<"$tmp_ipv4")
     local public_ipv6
-    public_ipv6=$(cat "$TMP_IPV6")
+    public_ipv6=$(<"$tmp_ipv6")
     local provider
-    provider=$(cat "$TMP_ISP")
-    
-    # CLEAN UP TEMPORARY FILES
-    rm -f "$TMP_IPV4" "$TMP_IPV6" "$TMP_ISP"
+    provider=$(<"$tmp_isp")
     
     # --- FALLBACK LOGIC: IF CURL FAILS, GET IP LOCALLY ---
     if [[ -z "$public_ipv4" ]]; then
@@ -341,7 +616,7 @@ show_enhanced_system_status() {
     local max_value_width=$(( terminal_width - max_label_len - 7 ))
     [[ $max_value_width -lt 20 ]] && max_value_width=20
 
-    printf "${B_BLUE}╔%s╗\n" "$(printf '═%.0s' $(seq 1 $((max_label_len + max_value_width + 5)) ))"
+    printf "${B_BLUE}%s\n" "$(printf '%.0s' $(seq 1 $((max_label_len + max_value_width + 5)) ))"
     for i in "${!labels[@]}"; do
         local label="${labels[$i]}"
         local value="${values[$i]}"
@@ -357,18 +632,18 @@ show_enhanced_system_status() {
         local visual_value_len
         visual_value_len=$(get_visual_length "$value")
         
-        printf "${B_BLUE}║${C_WHITE} %s" "$label"
+        printf "${B_BLUE}${C_WHITE} %s" "$label"
         printf "%*s" "$((max_label_len - ${#label}))" ""
         
-        printf " ${B_BLUE}│${C_CYAN} %s" "$value"
+        printf " ${B_BLUE}${C_CYAN} %s" "$value"
 
         local padding=$(( max_value_width - visual_value_len ))
         [[ $padding -lt 0 ]] && padding=0
         printf "%*s" "$padding" ""
         
-        printf " ${B_BLUE}║\n"
+        printf " ${B_BLUE}\n"
     done
-    printf "${B_BLUE}╚%s╝\n" "$(printf '═%.0s' $(seq 1 $((max_label_len + max_value_width + 5)) ))"
+    printf "${B_BLUE}%s\n" "$(printf '%.0s' $(seq 1 $((max_label_len + max_value_width + 5)) ))"
 }
 # #############################################################################
 # --- NETWORK OPTIMIZER CORE ---
@@ -414,20 +689,19 @@ wait_for_dpkg_lock() {
 
 reset_environment() {
     log_message "INFO" "RESETTING ENVIRONMENT AFTER PACKAGE INSTALLATION..."
-    if command -v apt-get >/dev/null 2>&1; then
+    if [[ "${PACKAGE_MANAGER:-}" == "apt" ]]; then
         apt-get clean 2>/dev/null || true
-        rm -f /var/lib/dpkg/lock* /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>/dev/null || true
+        # Never delete package-manager lock files. They are removed by dpkg/apt
+        # when the owning process exits; deleting them can corrupt the database.
+        dpkg --configure -a 2>/dev/null || true
     fi
     reset 2>/dev/null || true
     stty sane 2>/dev/null || true
     hash -r 2>/dev/null || true
-    [[ -f /etc/environment ]] && source /etc/environment 2>/dev/null || true
-    [[ -f ~/.bashrc ]] && source ~/.bashrc 2>/dev/null || true
     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
-    
+    detect_package_manager || true
     log_message "WARN" "IF PACKAGE MANAGER ISSUES PERSIST, A MANUAL PROCESS CHECK OR REBOOT MIGHT BE REQUIRED."
 
-    sleep 3
     log_message "SUCCESS" "ENVIRONMENT RESET COMPLETED."
     if ! test_environment_health; then
         suggest_reconnection
@@ -449,11 +723,13 @@ test_environment_health() {
         log_message "WARN" "TERMINAL OUTPUT TEST FAILED."
         return 1
     fi
-    if ! touch "/tmp/netopt_test_$$" 2>/dev/null; then
+    local test_file
+    test_file=$(mktemp "$SCRIPT_TMP_ROOT/netopt_test.XXXXXX") 2>/dev/null
+    if [[ -z "$test_file" ]]; then
         log_message "WARN" "FILE SYSTEM ACCESS TEST FAILED."
         return 1
     fi
-    rm -f "/tmp/netopt_test_$$" 2>/dev/null
+    rm -f -- "$test_file"
     if [[ "${#failed_commands[@]}" -gt 0 ]]; then
         log_message "WARN" "SOME COMMANDS NOT FOUND: ${failed_commands[*]}"
         return 1
@@ -463,9 +739,9 @@ test_environment_health() {
 }
 
 suggest_reconnection() {
-    printf "\n%s╔════════════════════════════════════════════════════════╗%s\n" "$C_RED" "$C_RESET"
-    printf "%s║                    ATTENTION REQUIRED                 ║%s\n" "$C_RED" "$C_RESET"
-    printf "%s╚════════════════════════════════════════════════════════╝%s\n\n" "$C_RED" "$C_RESET"
+    printf "\n%s========================================%s\n" "$C_RED" "$C_RESET"
+    printf "%s           ATTENTION REQUIRED          %s\n" "$C_RED" "$C_RESET"
+    printf "%s========================================%s\n\n" "$C_RED" "$C_RESET"
     log_message "WARN" "ENVIRONMENTAL ISSUES DETECTED AFTER PACKAGE INSTALLATION."
     printf "%sFOR OPTIMAL PERFORMANCE, PLEASE:%s\n\n" "$C_YELLOW" "$C_RESET"
     printf "%s1. %sPRESS CTRL+C TO EXIT THIS SCRIPT%s\n" "$C_CYAN" "$C_WHITE" "$C_RESET"
@@ -479,16 +755,37 @@ suggest_reconnection() {
         ((countdown--))
     done
     printf "\n\n"
-    printf "%b" "${C_YELLOW}CONTINUE WITH POTENTIAL ISSUES? (Y/N): ${C_RESET}"
-    read -e -r choice
-    if [[ ! "$choice" =~ ^[Yy]$ ]]; then
+    if ! confirm_action "CONTINUE WITH POTENTIAL ISSUES?"; then
         log_message "INFO" "SCRIPT PAUSED FOR SSH RECONNECTION. PLEASE RUN AGAIN AFTER RECONNECTING."
-        exit 0
+        return 1
     fi
     log_message "WARN" "CONTINUING DESPITE ENVIRONMENT ISSUES..."
 }
+# --- PACKAGE MANAGEMENT HELPERS ---
 
-# [+] CONSOLIDATED DEPENDENCY INSTALLER (MODIFIED TO INCLUDE NEW TOOLS)
+package_command() {
+    printf '%s\n' "${PACKAGE_COMMANDS[$1]:-$1}"
+}
+
+package_is_available() {
+    local package="$1"
+    local command_name
+    command_name=$(package_command "$package")
+
+    if command -v "$command_name" >/dev/null 2>&1 ||
+        { command -v dpkg-query >/dev/null 2>&1 &&
+          dpkg-query -W -f='${Status}' "$package" 2>/dev/null |
+              grep -q '^install ok installed$'; }; then
+        return 0
+    fi
+    if [[ "$package" == "netcat-openbsd" ]] &&
+        { command -v ncat >/dev/null 2>&1 || command -v netcat >/dev/null 2>&1; }; then
+        return 0
+    fi
+    return 1
+}
+
+# --- CONSOLIDATED DEPENDENCY INSTALLER ---
 install_dependencies() {
     log_message "INFO" "CHECKING AND INSTALLING REQUIRED DEPENDENCIES..."
     if ! check_internet_connection; then
@@ -496,38 +793,23 @@ install_dependencies() {
         return 1
     fi
 
-    local deps=("curl" "wget" "socat" "ethtool" "net-tools" "dnsutils" "mtr-tiny" "iperf3" "jq" "bc" "lsb-release" "netcat-openbsd" "nmap" "fping" "uuid-runtime" "iptables-persistent" "python3" "python3-pip" "fail2ban" "chkrootkit" "unzip" "rkhunter" "lynis" "htop" "btop" "ncdu" "iftop" "git" "certbot" "xtables-addons-common" "geoip-database" "gnupg")
+    local deps=("${CORE_PACKAGES[@]}")
     local missing_deps=()
     
     for dep in "${deps[@]}"; do
-        local cmd_name="$dep"
-        [[ "$dep" == "dnsutils" ]] && cmd_name="dig"
-        [[ "$dep" == "net-tools" ]] && cmd_name="ifconfig"
-        [[ "$dep" == "mtr-tiny" ]] && cmd_name="mtr"
-        [[ "$dep" == "netcat-openbsd" ]] && cmd_name="nc"
-        [[ "$dep" == "uuid-runtime" ]] && cmd_name="uuidgen"
-        [[ "$dep" == "iptables-persistent" ]] && cmd_name="netfilter-persistent"
-        [[ "$dep" == "xtables-addons-common" ]] && cmd_name="xtables-addons-info"
-
-
-        if ! command -v "$cmd_name" &>/dev/null; then
-            if [[ "$dep" == "netcat-openbsd" ]] && (command -v "ncat" >/dev/null || command -v "netcat" >/dev/null); then
-                continue
-            fi
+        if ! package_is_available "$dep"; then
             missing_deps+=("$dep")
         fi
     done
 
     if [[ "${#missing_deps[@]}" -gt 0 ]]; then
-        log_message "WARN" "INSTALLING MISSING DEPENDENCIES: ${missing_deps[*]}"
-        if ! wait_for_dpkg_lock; then
-            log_message "ERROR" "COULD NOT ACQUIRE PACKAGE LOCK."
-            return 1
+        log_message "WARN" "MISSING DEPENDENCIES: ${missing_deps[*]}"
+        if ! confirm_installation "INSTALL THESE DEPENDENCIES"; then
+            log_message "INFO" "DEPENDENCY INSTALLATION CANCELED BY USER."
+            return 0
         fi
-
-        apt-get update -qq
-        
-        if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" "${missing_deps[@]}"; then
+        log_message "INFO" "INSTALLING MISSING DEPENDENCIES: ${missing_deps[*]}"
+        if ! refresh_package_indexes || ! install_packages "${missing_deps[@]}"; then
             log_message "ERROR" "FAILED TO INSTALL SOME DEPENDENCIES. PLEASE TRY INSTALLING THEM MANUALLY."
             return 1
         else
@@ -538,6 +820,9 @@ install_dependencies() {
         fi
     else
         log_message "INFO" "ALL DEPENDENCIES ARE ALREADY INSTALLED."
+    fi
+    if [[ "$AUTO_INSTALL_DOCKER" == "1" ]]; then
+        install_docker_engine || return 1
     fi
     return 0
 }
@@ -659,50 +944,224 @@ EOF
 # --- NEW FUNCTIONS (ADVANCED & WEB TOOLS) ---
 # ###########################################################################
 
+
+docker_mirror_url() {
+    printf '%s' "${1%/}"
+}
+
+test_docker_registry_mirror() {
+    local mirror
+    mirror=$(docker_mirror_url "$1")
+    curl -sS -L -o /dev/null \
+        --connect-timeout "$DOCKER_MIRROR_TIMEOUT" \
+        --max-time "$DOCKER_MIRROR_TIMEOUT" \
+        -w '%{http_code}|%{time_total}|%{time_connect}' \
+        "${mirror}${DOCKER_MIRROR_PROBE_PATH}" 2>/dev/null
+}
+
+docker_registry_probe_is_valid() {
+    local status="$1"
+    [[ "$status" == "200" || "$status" == "401" ]]
+}
+
+apply_docker_registry_mirrors() {
+    local -a mirrors=("$@")
+    ((${#mirrors[@]} > 0)) || {
+        log_message "ERROR" "NO DOCKER REGISTRY MIRRORS WERE PROVIDED."
+        return 1
+    }
+    command_exists python3 || {
+        log_message "ERROR" "PYTHON3 IS REQUIRED TO UPDATE DOCKER DAEMON CONFIGURATION SAFELY."
+        return 1
+    }
+
+    local config_dir config_tmp
+    config_dir=$(dirname "$DOCKER_DAEMON_CONFIG")
+    ensure_directory "$config_dir" || return 1
+    if [[ -f "$DOCKER_DAEMON_CONFIG" ]]; then
+        create_backup "$DOCKER_DAEMON_CONFIG" || return 1
+    fi
+    config_tmp=$(mktemp "${SCRIPT_TMP_DIR:-$SCRIPT_TMP_ROOT}/docker-daemon.XXXXXX") || return 1
+
+    if ! python3 - "$DOCKER_DAEMON_CONFIG" "$config_tmp" "${mirrors[@]}" <<'PY'
+import json
+import os
+import sys
+
+source_path, target_path, *mirrors = sys.argv[1:]
+data = {}
+if os.path.exists(source_path) and os.path.getsize(source_path):
+    with open(source_path, "r", encoding="utf-8") as source:
+        data = json.load(source)
+if not isinstance(data, dict):
+    raise ValueError("Docker daemon configuration must be a JSON object")
+data["registry-mirrors"] = mirrors
+with open(target_path, "w", encoding="utf-8") as target:
+    json.dump(data, target, indent=2)
+    target.write("\n")
+PY
+    then
+        rm -f -- "$config_tmp"
+        log_message "ERROR" "FAILED TO GENERATE VALID DOCKER DAEMON CONFIGURATION."
+        return 1
+    fi
+    chmod 644 "$config_tmp"
+    mv -f -- "$config_tmp" "$DOCKER_DAEMON_CONFIG" || {
+        rm -f -- "$config_tmp"
+        log_message "ERROR" "FAILED TO INSTALL DOCKER DAEMON CONFIGURATION."
+        return 1
+    }
+
+    if command_exists systemctl; then
+        systemctl restart docker || {
+            log_message "ERROR" "DOCKER FAILED TO RESTART AFTER MIRROR CONFIGURATION."
+            return 1
+        }
+    fi
+    if command_exists docker && ! docker info >/dev/null 2>&1; then
+        log_message "ERROR" "DOCKER IS NOT RESPONDING AFTER MIRROR CONFIGURATION."
+        return 1
+    fi
+    log_message "SUCCESS" "DOCKER REGISTRY MIRRORS APPLIED: ${mirrors[*]}"
+}
+
+benchmark_docker_registry_mirrors() {
+    clear_screen
+    log_message "INFO" "--- DOCKER REGISTRY MIRROR BENCHMARK ---"
+    local -a mirrors=()
+    local mirror
+    for mirror in "${DOCKER_REGISTRY_MIRRORS[@]}"; do
+        [[ -n "$mirror" ]] && mirrors+=("$(docker_mirror_url "$mirror")")
+    done
+    ((${#mirrors[@]} > 0)) || {
+        log_message "ERROR" "DOCKER REGISTRY MIRROR LIST IS EMPTY."
+        return 1
+    }
+
+    local result_file="${SCRIPT_TMP_DIR:-$SCRIPT_TMP_ROOT}/docker-mirror-results"
+    : > "$result_file" || return 1
+    printf '%b\n' "${C_CYAN}TESTING ${#mirrors[@]} DOCKER REGISTRY MIRRORS...${C_RESET}"
+    local index
+    for index in "${!mirrors[@]}"; do
+        mirror="${mirrors[index]}"
+        local probe status total connect
+        probe=$(test_docker_registry_mirror "$mirror")
+        IFS='|' read -r status total connect <<< "$probe"
+        if docker_registry_probe_is_valid "$status"; then
+            printf '%s\n' "$total|$connect|$mirror|$status" >> "$result_file"
+            printf '%b' "${C_GREEN}.${C_RESET}"
+        else
+            printf '%b' "${C_RED}x${C_RESET}"
+        fi
+    done
+    printf '\n'
+    if [[ ! -s "$result_file" ]]; then
+        log_message "ERROR" "NO DOCKER REGISTRY MIRROR RESPONDED WITH A VALID REGISTRY STATUS."
+        rm -f -- "$result_file"
+        return 1
+    fi
+
+    mapfile -t DOCKER_MIRROR_RESULTS < <(sort -t'|' -k1,1n -k2,2n "$result_file")
+    rm -f -- "$result_file"
+    printf '\n%-5s %-12s %-12s %-8s %s\n' "RANK" "TOTAL (S)" "CONNECT (S)" "STATUS" "MIRROR"
+    local result rank=1
+    for result in "${DOCKER_MIRROR_RESULTS[@]}"; do
+        IFS='|' read -r total connect mirror status <<< "$result"
+        printf '%-5d %-12s %-12s %-8s %s\n' "$rank" "$total" "$connect" "$status" "$mirror"
+        rank=$((rank + 1))
+    done
+
+    local best
+    IFS='|' read -r total connect best status <<< "${DOCKER_MIRROR_RESULTS[0]}"
+    printf '\n%b\n' "${C_YELLOW}FASTEST MIRROR: ${best} (${total}s)${C_RESET}"
+    local -a ranked_mirrors=()
+    for result in "${DOCKER_MIRROR_RESULTS[@]}"; do
+        IFS='|' read -r total connect mirror status <<< "$result"
+        ranked_mirrors+=("$mirror")
+    done
+    if confirm_action "APPLY FASTEST MIRROR TO DOCKER"; then
+        apply_docker_registry_mirrors "${ranked_mirrors[@]}"
+    else
+        log_message "INFO" "DOCKER REGISTRY MIRROR APPLICATION SKIPPED."
+    fi
+    pause_screen
+}
+
+install_docker_engine() {
+    local -a missing=()
+    local package
+
+    if ! command -v apt-get >/dev/null 2>&1; then
+        log_message "ERROR" "DOCKER INSTALLER CURRENTLY SUPPORTS APT-BASED SYSTEMS ONLY."
+        return 1
+    fi
+
+    for package in "${DOCKER_PACKAGES[@]}"; do
+        package_is_available "$package" || missing+=("$package")
+    done
+    if ((${#missing[@]} == 0)) &&
+        command -v docker >/dev/null 2>&1 &&
+        docker compose version >/dev/null 2>&1; then
+        log_message "INFO" "DOCKER ENGINE AND DOCKER COMPOSE ARE ALREADY INSTALLED."
+        systemctl enable --now docker >/dev/null 2>&1 || true
+        return 0
+    fi
+
+    wait_for_dpkg_lock || return 1
+    install -m 0755 -d "$(dirname "$DOCKER_KEYRING")"
+    if [[ ! -s "$DOCKER_KEYRING" ]]; then
+        log_message "INFO" "DOWNLOADING DOCKER SIGNING KEY..."
+        curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 "$DOCKER_GPG_URL" -o "$DOCKER_KEYRING" || {
+            log_message "ERROR" "FAILED TO DOWNLOAD DOCKER SIGNING KEY."
+            return 1
+        }
+
+        chmod a+r "$DOCKER_KEYRING"
+    fi
+
+    local codename architecture
+    codename=$(. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_CODENAME:-}")
+    architecture=$(dpkg --print-architecture)
+    if [[ -z "$codename" ]]; then
+        log_message "ERROR" "COULD NOT DETECT UBUNTU CODENAME FOR DOCKER REPOSITORY."
+        return 1
+    fi
+    printf 'deb [arch=%s signed-by=%s] %s %s stable\n' \
+        "$architecture" "$DOCKER_KEYRING" "$DOCKER_REPOSITORY_URL" "$codename" |
+        tee "$DOCKER_SOURCE_FILE" >/dev/null || return 1
+
+    refresh_package_indexes || {
+        log_message "ERROR" "FAILED TO REFRESH PACKAGE INDEX AFTER ADDING DOCKER REPOSITORY."
+        return 1
+    }
+    log_message "INFO" "INSTALLING DOCKER ENGINE, BUILDX, AND DOCKER COMPOSE..."
+    if ! install_packages "${DOCKER_PACKAGES[@]}"; then
+        log_message "WARN" "OFFICIAL DOCKER PACKAGES FAILED; TRYING DISTRIBUTION PACKAGES."
+        install_packages docker.io docker-compose-v2 || {
+            log_message "ERROR" "FAILED TO INSTALL DOCKER AND DOCKER COMPOSE."
+            return 1
+        }
+    fi
+
+    systemctl enable --now docker >/dev/null 2>&1 || {
+        log_message "ERROR" "DOCKER SERVICE COULD NOT BE STARTED."
+        return 1
+    }
+    if ! docker compose version >/dev/null 2>&1; then
+        log_message "ERROR" "DOCKER COMPOSE PLUGIN IS NOT AVAILABLE AFTER INSTALLATION."
+        return 1
+    fi
+    log_message "SUCCESS" "DOCKER ENGINE AND DOCKER COMPOSE INSTALLED SUCCESSFULLY."
+}
+
 manage_docker() {
     _install_docker() {
-        log_message "INFO" "CHECKING AND INSTALLING DOCKER..."
-        if command -v docker &>/dev/null; then
-            log_message "INFO" "DOCKER IS ALREADY INSTALLED."
-            return 0
-        fi
-
-        log_message "INFO" "INSTALLING DOCKER PREREQUISITES (VIA CENTRAL FUNCTION)..."
-        if ! install_dependencies; then
-            log_message "ERROR" "FAILED TO INSTALL DOCKER PREREQUISITES."
-            return 1
-        fi
-
-        log_message "INFO" "ADDING DOCKER'S OFFICIAL GPG KEY..."
-        install -m 0755 -d /etc/apt/keyrings
-        if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc; then
-            log_message "ERROR" "FAILED TO DOWNLOAD DOCKER GPG KEY."
-            return 1
-        fi
-        chmod a+r /etc/apt/keyrings/docker.asc
-
-        log_message "INFO" "SETTING UP DOCKER'S APT REPOSITORY..."
-        echo \
-          "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-          $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-          tee /etc/apt/sources.list.d/docker.list > /dev/null
-        
-        log_message "INFO" "INSTALLING DOCKER ENGINE..."
-        apt-get update -qq
-        if ! apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-            log_message "ERROR" "FAILED TO INSTALL DOCKER ENGINE PACKAGES."
-            return 1
-        fi
-
-        systemctl enable --now docker
-        check_service_status "docker"
-        log_message "SUCCESS" "DOCKER INSTALLED AND STARTED SUCCESSFULLY."
-        return 0
+        install_docker_engine
     }
 
     _manage_docker_containers() {
         while true; do
-            clear
+            clear_screen
             echo -e "${B_CYAN}--- CONTAINER MANAGEMENT ---${C_RESET}\n"
             echo -e "${C_WHITE}LIST OF AVAILABLE CONTAINERS:${C_RESET}"
             docker ps -a
@@ -757,13 +1216,14 @@ manage_docker() {
     }
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- DOCKER INSTALLATION & MANAGEMENT ---${C_RESET}\n"
         echo -e "${C_WHITE}THIS MENU PROVIDES THE NECESSARY TOOLS TO MANAGE DOCKER AND ITS CONTAINERS.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL DOCKER & DOCKER-COMPOSE"
         printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "2" "MANAGE CONTAINERS (START, STOP, LOGS)"
-        printf "  ${C_YELLOW}%2d)${C_RED}   %s\n" "3" "PRUNE DOCKER SYSTEM (REMOVE UNUSED CONTAINERS, IMAGES, ETC.)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "4" "RETURN"
+        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "BENCHMARK & APPLY DOCKER REGISTRY MIRROR"
+        printf "  ${C_YELLOW}%2d)${C_RED}   %s\n" "4" "PRUNE DOCKER SYSTEM (REMOVE UNUSED CONTAINERS, IMAGES, ETC.)"
+        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "5" "RETURN"
         echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
         printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
 
@@ -780,6 +1240,9 @@ manage_docker() {
                 fi
                 ;;
             3)
+                benchmark_docker_registry_mirrors
+                ;;
+            4)
                 if ! command -v docker &>/dev/null; then
                     log_message "ERROR" "DOCKER IS NOT INSTALLED."
                 else
@@ -795,7 +1258,7 @@ manage_docker() {
                 fi
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
-            4)
+            5)
                 return
                 ;;
             *)
@@ -823,7 +1286,7 @@ manage_geoip_blocking() {
     }
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- BLOCKING BY GEOGRAPHICAL LOCATION (GEO-IP) ---${C_RESET}\n"
         echo -e "${C_WHITE}THIS TOOL ALLOWS YOU TO BLOCK INCOMING TRAFFIC FROM SPECIFIC COUNTRIES.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL PREREQUISITES"
@@ -857,7 +1320,7 @@ manage_geoip_blocking() {
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             3)
-                clear
+                clear_screen
                 echo -e "${B_CYAN}--- LIST OF GEO-IP BLOCKING RULES ---${C_RESET}\n"
                 iptables -L INPUT -v -n | grep "$COMMENT_TAG"
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
@@ -907,14 +1370,18 @@ manage_caddy() {
         fi
 
         log_message "INFO" "ADDING CADDY'S OFFICIAL GPG KEY..."
-        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+        curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+            'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' |
+            gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
         
         log_message "INFO" "SETTING UP CADDY'S APT REPOSITORY..."
-        curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
+        curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+            'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' |
+            tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
         
         log_message "INFO" "INSTALLING CADDY..."
-        apt-get update -qq
-        if ! apt-get install -y -qq caddy; then
+        refresh_package_indexes
+        if ! install_packages caddy; then
             log_message "ERROR" "FAILED TO INSTALL CADDY."
             return 1
         fi
@@ -926,7 +1393,7 @@ manage_caddy() {
     }
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- CADDY WEB SERVER MANAGEMENT ---${C_RESET}\n"
         echo -e "${C_WHITE}THIS MENU HELPS YOU INSTALL CADDY AND SET UP A REVERSE PROXY WITH AUTOMATIC SSL FOR YOUR PANEL.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL CADDY (WITH AUTOMATIC SSL)"
@@ -989,7 +1456,7 @@ EOF
             4)
                 (
                     trap '' INT
-                    clear
+                    clear_screen
                     echo -e "${B_CYAN}--- CADDY SERVICE STATUS ---${C_RESET}\n"
                     systemctl status caddy --no-pager
                     echo -e "\n${B_CYAN}--- LAST 50 LINES OF CADDY LOG ---${C_RESET}\n"
@@ -1008,7 +1475,7 @@ EOF
 }
 manage_certbot() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- MANAGE SSL CERTIFICATES WITH CERTBOT ---${C_RESET}\n"
         echo -e "${C_WHITE}THIS TOOL ALLOWS YOU TO OBTAIN AND MANAGE FREE SSL CERTIFICATES FROM LET'S ENCRYPT.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL CERTBOT"
@@ -1048,7 +1515,7 @@ manage_certbot() {
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             3)
-                clear
+                clear_screen
                 log_message "INFO" "LISTING CERTBOT CERTIFICATES..."
                 certbot certificates
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
@@ -1084,7 +1551,7 @@ manage_certbot() {
 
 manage_malware_scanners() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- MALWARE & ROOTKIT SCANNERS ---${C_RESET}\n"
         echo -e "${C_WHITE}THIS MENU PROVIDES TOOLS TO SCAN THE SYSTEM FOR POTENTIAL MALWARE AND ROOTKITS.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "RUN SCAN WITH CHKROOTKIT (QUICK)"
@@ -1095,7 +1562,7 @@ manage_malware_scanners() {
 
         case $choice in
             1)
-                clear
+                clear_screen
                 log_message "INFO" "STARTING CHKROOTKIT SCAN..."
                 echo -e "${C_YELLOW}RUNNING CHKROOTKIT SCANNER... THIS MAY TAKE A FEW MINUTES.${C_RESET}"
                 echo -e "${C_CYAN}TO CANCEL THE SCAN AND RETURN TO THE MENU, PRESS CTRL+C.${C_RESET}\n"
@@ -1113,7 +1580,7 @@ manage_malware_scanners() {
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             2)
-                clear
+                clear_screen
                 if ! command -v rkhunter &>/dev/null; then
                     log_message "WARN" "RKHUNTER NOT FOUND. ATTEMPTING TO INSTALL..."
                     install_dependencies
@@ -1152,7 +1619,7 @@ manage_malware_scanners() {
 
 manage_lynis_audit() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- LYNIS SECURITY AUDIT TOOL ---${C_RESET}\n"
         echo -e "${C_WHITE}THE LYNIS TOOL PERFORMS A COMPREHENSIVE SECURITY AUDIT OF YOUR SYSTEM AND PROVIDES SUGGESTIONS FOR HARDENING.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL OR UPDATE LYNIS"
@@ -1163,14 +1630,14 @@ manage_lynis_audit() {
 
         case $choice in
             1)
-                clear
+                clear_screen
                 log_message "INFO" "INSTALLING/UPDATING LYNIS..."
                 install_dependencies
                 log_message "SUCCESS" "LYNIS INSTALLATION/UPDATE PROCESS COMPLETED."
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             2)
-                clear
+                clear_screen
                 if ! command -v lynis &>/dev/null; then
                     log_message "ERROR" "LYNIS IS NOT INSTALLED. PLEASE INSTALL IT FIRST USING OPTION 1."
                     echo -e "\n${C_RED}ERROR: LYNIS IS NOT INSTALLED. PLEASE INSTALL IT FIRST USING OPTION 1.${N}"
@@ -1203,7 +1670,7 @@ manage_lynis_audit() {
 
 manage_system_monitors() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- ADVANCED SYSTEM RESOURCE MONITORING ---${C_RESET}\n"
         echo -e "${C_WHITE}THESE TOOLS ALLOW YOU TO VIEW LIVE AND DETAILED CPU, MEMORY, AND RUNNING PROCESSES.${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "1" "RUN BTOP (ADVANCED & GRAPHICAL)"
@@ -1214,7 +1681,7 @@ manage_system_monitors() {
 
         case $choice in
             1)
-                clear
+                clear_screen
                 if ! command -v btop &>/dev/null; then
                     log_message "WARN" "BTOP NOT FOUND. ATTEMPTING TO INSTALL..."
                     install_dependencies
@@ -1233,7 +1700,7 @@ manage_system_monitors() {
                 log_message "INFO" "BTOP SESSION FINISHED."
                 ;;
             2)
-                clear
+                clear_screen
                 if ! command -v htop &>/dev/null; then
                     log_message "WARN" "HTOP NOT FOUND. ATTEMPTING TO INSTALL..."
                     install_dependencies
@@ -1261,7 +1728,7 @@ manage_system_monitors() {
 }
 
 manage_disk_analyzer() {
-    clear
+    clear_screen
     if ! command -v ncdu &>/dev/null; then
         log_message "WARN" "NCDU NOT FOUND. ATTEMPTING TO INSTALL..."
         install_dependencies
@@ -1283,7 +1750,7 @@ manage_disk_analyzer() {
 }
 
 manage_network_traffic() {
-    clear
+    clear_screen
     if ! command -v iftop &>/dev/null; then
         log_message "WARN" "IFTOP NOT FOUND. ATTEMPTING TO INSTALL..."
         install_dependencies
@@ -1313,7 +1780,7 @@ manage_network_traffic() {
 
 manage_swap() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- SWAP MEMORY MANAGEMENT ---${C_RESET}\n"
         echo -e "${C_WHITE}SWAP MEMORY ACTS AS VIRTUAL RAM ON YOUR DISK, HELPING SYSTEM STABILITY WHEN RAM IS LOW.${C_RESET}\n"
         echo -e "${C_WHITE}CURRENT SWAP STATUS:${C_RESET}"
@@ -1370,7 +1837,7 @@ manage_swap() {
 }
 
 manage_system_cleanup() {
-    clear
+    clear_screen
     log_message "INFO" "STARTING SYSTEM CLEANUP PROCESS..."
     echo -e "${B_CYAN}--- SYSTEM CLEANUP ---${C_RESET}\n"
     echo -e "${C_WHITE}THIS OPERATION REMOVES APT CACHE FILES AND UNNECESSARY PACKAGES TO FREE UP DISK SPACE.${C_RESET}\n"
@@ -1387,7 +1854,7 @@ manage_system_cleanup() {
     apt-get autoremove -y --purge > /dev/null 2>&1
     
     log_message "SUCCESS" "SYSTEM CLEANUP COMPLETED."
-    echo -e "\n${C_GREEN}✅ CLEANUP COMPLETED SUCCESSFULLY.${C_RESET}"
+    echo -e "\n${C_GREEN} CLEANUP COMPLETED SUCCESSFULLY.${C_RESET}"
 
     echo -e "\n${C_YELLOW}DISK STATUS AFTER CLEANUP:${C_RESET}"
     df -h / | tail -n 1
@@ -1549,10 +2016,10 @@ find_best_mtu() {
         if [[ "$size" -le "$current_mtu" ]]; then
             printf "  TESTING MTU %d... " "$size"
             if test_mtu_size "$size"; then
-                printf "${G}✓${N}\n"
+                printf "${G}${N}\n"
                 optimal_mtu="$size"; found_working=1; break
             else
-                printf "${R}✗${N}\n"
+                printf "${R}${N}\n"
             fi
         fi
     done
@@ -1563,10 +2030,10 @@ find_best_mtu() {
             test_mtu=$(( (min_mtu + max_mtu) / 2 ))
             printf "  TESTING MTU %d... " "$test_mtu"
             if test_mtu_size "$test_mtu"; then
-                printf "${G}✓${N}\n"
+                printf "${G}${N}\n"
                 optimal_mtu="$test_mtu"; min_mtu=$((test_mtu + 1)); found_working=1
             else
-                printf "${R}✗${N}\n"
+                printf "${R}${N}\n"
                 max_mtu=$((test_mtu - 1))
             fi
         done
@@ -1754,7 +2221,7 @@ intelligent_optimize() {
 
 show_as_bbr_menu() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- NETWORK STACK OPTIMIZATION MENU ---${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "APPLY INTELLIGENT OPTIMIZATION (RECOMMENDED)"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "RESTORE TO DEFAULT SETTINGS"
@@ -1785,11 +2252,114 @@ show_as_bbr_menu() {
 }
 
 run_as_bbr_optimization() {
-    init_environment
     show_as_bbr_menu
 }
+
+reset_dns_to_system_default() {
+    log_message "INFO" "RESTORING SYSTEM DNS DEFAULTS..."
+
+    if command -v resolvectl >/dev/null 2>&1 &&
+        systemctl is-active --quiet systemd-resolved; then
+        if [[ -z "$PRIMARY_INTERFACE" ]]; then
+            log_message "ERROR" "COULD NOT DETECT PRIMARY INTERFACE FOR DNS RESET."
+            return 1
+        fi
+        if resolvectl revert "$PRIMARY_INTERFACE" >/dev/null 2>&1; then
+            log_message "SUCCESS" "SYSTEM DNS DEFAULTS RESTORED VIA RESOLVECTL."
+            return 0
+        fi
+        log_message "WARN" "RESOLVECTL REVERT FAILED; TRYING NETWORKMANAGER."
+    fi
+
+    if command -v nmcli >/dev/null 2>&1 &&
+        systemctl is-active --quiet NetworkManager; then
+        local connection
+        connection=$(nmcli -t -f NAME,DEVICE connection show --active |
+            awk -F: 'NR == 1 { print $1 }')
+        if [[ -n "$connection" ]] &&
+            nmcli connection modify "$connection" ipv4.ignore-auto-dns no ipv4.dns "" &&
+            nmcli connection up "$connection" >/dev/null 2>&1; then
+            log_message "SUCCESS" "SYSTEM DNS DEFAULTS RESTORED VIA NETWORKMANAGER."
+            return 0
+        fi
+        log_message "WARN" "NETWORKMANAGER DNS RESET FAILED; USING RESOLV.CONF FALLBACK."
+    fi
+
+    local resolv_file="/etc/resolv.conf"
+    local backup_path
+    if [[ -f "$resolv_file" ]]; then
+        backup_path=$(create_backup "$resolv_file") || return 1
+    fi
+    if lsattr "$resolv_file" 2>/dev/null | grep -q 'i'; then
+        chattr -i "$resolv_file" 2>/dev/null || {
+            log_message "ERROR" "FAILED TO REMOVE IMMUTABLE ATTRIBUTE FROM $resolv_file."
+            return 1
+        }
+    fi
+    if printf '%s\n' \
+        "# DNS reset by uHelper" \
+        "nameserver 127.0.0.53" > "$resolv_file"; then
+        log_message "SUCCESS" "SYSTEM DNS DEFAULT WRITTEN TO $resolv_file."
+        return 0
+    fi
+    log_message "ERROR" "FAILED TO RESET DNS${backup_path:+; BACKUP: $backup_path}."
+    return 1
+}
+
+manage_dns_switcher() {
+    local choice provider dns_pair dns1 dns2 index
+
+    while true; do
+        clear_screen
+        printf '%b\n\n' "${B_CYAN}--- DNS PROVIDER SWITCHER ---${C_RESET}"
+        printf '%b\n' "${C_WHITE}SELECT A DNS PROVIDER OR RESTORE SYSTEM DEFAULTS.${C_RESET}"
+        printf '%b\n\n' "${C_YELLOW}CURRENT DNS:${C_RESET}"
+        show_current_dns_smart
+
+        for index in "${!DNS_SWITCHER_PROVIDERS[@]}"; do
+            provider="${DNS_SWITCHER_PROVIDERS[index]}"
+            printf "  ${C_YELLOW}%2d)${C_WHITE} %-17s %s\n" \
+                "$((index + 1))" "$provider" "${DNS_SWITCHER_SERVERS[$provider]}"
+        done
+        printf "  ${C_YELLOW}%2d)${C_WHITE} RETURN TO DNS MENU\n" \
+            "$(( ${#DNS_SWITCHER_PROVIDERS[@]} + 1 ))"
+        echo -e "${B_BLUE}-----------------------------------${C_RESET}"
+        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"
+        read -e -r choice || return 1
+
+        if [[ ! "$choice" =~ ^[0-9]+$ ]]; then
+            printf "\n%b\n" "${C_RED}INVALID INPUT. NUMBERS ONLY.${C_RESET}"
+            sleep 1
+            continue
+        fi
+        choice=$((10#$choice))
+        if (( choice == ${#DNS_SWITCHER_PROVIDERS[@]} + 1 )); then
+            return 0
+        fi
+        if (( choice < 1 || choice > ${#DNS_SWITCHER_PROVIDERS[@]} )); then
+            printf "\n%b\n" "${C_RED}INVALID OPTION.${C_RESET}"
+            sleep 1
+            continue
+        fi
+
+        provider="${DNS_SWITCHER_PROVIDERS[choice - 1]}"
+        if [[ "$provider" == "Reset to Default" ]]; then
+            reset_dns_to_system_default
+        else
+            dns_pair="${DNS_SWITCHER_SERVERS[$provider]}"
+            read -r dns1 dns2 <<< "$dns_pair"
+            if is_valid_ip "$dns1" && is_valid_ip "$dns2"; then
+                apply_dns_persistent "$dns1" "$dns2"
+            else
+                log_message "ERROR" "INVALID DNS CONFIGURATION FOR PROVIDER '$provider'."
+            fi
+        fi
+        read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
+    done
+}
+
 manage_dns() {
-    clear
+    clear_screen
     if ! command -v fping &>/dev/null; then
         log_message "WARN" "FPING TOOL NOT FOUND. ATTEMPTING TO INSTALL AUTOMATICALLY..."
         if ! install_dependencies; then
@@ -1860,12 +2430,13 @@ manage_dns() {
     }
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- DNS MANAGEMENT & OPTIMIZATION ---${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "FIND AND SET THE BEST LOCAL (IRANIAN) DNS"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "FIND AND SET THE BEST GLOBAL DNS"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "VIEW CURRENT SYSTEM DNS"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "4" "RETURN TO OPTIMIZATION MENU"
+        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "4" "DNS PROVIDER SWITCHER"
+        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "5" "RETURN TO OPTIMIZATION MENU"
         echo -e "${B_BLUE}-----------------------------------${C_RESET}"
         printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"
         read -e -r choice
@@ -1874,7 +2445,8 @@ manage_dns() {
             1) find_and_set_best_dns LOCAL_DNS_LIST "LOCAL"; break ;;
             2) find_and_set_best_dns GLOBAL_DNS_LIST "GLOBAL"; break ;;
             3) clear; echo -e "${B_CYAN}--- CURRENT ACTIVE SYSTEM DNS ---${C_RESET}"; show_current_dns_smart; break ;;
-            4) return ;;
+            4) manage_dns_switcher ;;
+            5) return ;;
             *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
         esac
     done
@@ -1882,7 +2454,7 @@ manage_dns() {
 }
 
 manage_ipv6() {
-    clear
+    clear_screen
     local sysctl_conf="/etc/sysctl.conf"
     echo -e "${B_CYAN}--- ENABLE/DISABLE IPV6 ---${C_RESET}\n"
     printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "DISABLE IPV6"
@@ -1930,7 +2502,7 @@ manage_ipv6() {
     read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
 }
 manage_ssh_root() {
-  clear
+  clear_screen
   local sshd_config="/etc/ssh/sshd_config"
   local ssh_service_name="ssh"
   systemctl status sshd >/dev/null 2>&1 && ssh_service_name="sshd"
@@ -1980,7 +2552,7 @@ manage_ssh_root() {
 }
 
 manage_reboot_cron() {
-    clear
+    clear_screen
     echo -e "${B_CYAN}--- MANAGE AUTOMATIC SERVER REBOOT ---${C_RESET}\n"
     printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "ADD CRON JOB TO REBOOT EVERY 3 HOURS"
     printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "ADD CRON JOB TO REBOOT EVERY 7 HOURS"
@@ -2014,7 +2586,7 @@ manage_reboot_cron() {
     read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
 }
 change_server_password() {
-    clear
+    clear_screen
     echo -e "${B_CYAN}--- CHANGE SERVER PASSWORD ---${C_RESET}\n"
     echo -e "${C_YELLOW}THIS SCRIPT USES THE SYSTEM'S SECURE 'PASSWD' TOOL TO CHANGE YOUR PASSWORD.${C_RESET}"
     echo -e "${C_WHITE}PLEASE FOLLOW THE ON-SCREEN INSTRUCTIONS TO CHANGE YOUR PASSWORD.${C_RESET}"
@@ -2117,7 +2689,7 @@ EOF
 }
 manage_tcp_optimizers() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- TCP OPTIMIZER MANAGEMENT ---${C_RESET}\n"
         local current_qdisc
         current_qdisc=$(sysctl -n net.core.default_qdisc)
@@ -2148,7 +2720,7 @@ manage_tcp_optimizers() {
     done
 }
 manage_txui_panel() {
-    clear
+    clear_screen
     log_message "INFO" "--- TX-UI PANEL MANAGEMENT ---"
 
     echo -e "${B_CYAN}--- INSTALL / UPDATE TX-UI PANEL ---${C_RESET}\n"
@@ -2232,7 +2804,7 @@ manage_txui_panel() {
 # ###########################################################################
 
 manage_3xui_panel() {
-    clear
+    clear_screen
     log_message "INFO" "--- 3X-UI PANEL MANAGEMENT ---"
 
     echo -e "${B_CYAN}--- INSTALL / UPDATE 3X-UI PANEL ---${C_RESET}\n"
@@ -2301,7 +2873,8 @@ manage_3xui_panel() {
         if ! check_internet_connection; then
             log_message "ERROR" "NO INTERNET CONNECTION. CANNOT PROCEED WITH ONLINE INSTALLATION."
         else
-            if bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh); then
+            if bash <(curl -fsSL --retry 3 --connect-timeout 15 --max-time 120 \
+                https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh); then
                  log_message "SUCCESS" "3X-UI ONLINE INSTALLATION SCRIPT EXECUTED."
                  install_success=true
             else
@@ -2325,7 +2898,7 @@ manage_3xui_panel() {
 
 
 fix_whatsapp_time() {
-    clear
+    clear_screen
     log_message "INFO" "SETTING SERVER TIMEZONE TO FIX WHATSAPP DATE ISSUE..."
     timedatectl set-timezone Asia/Tehran
     log_message "SUCCESS" "TIMEZONE CHANGED TO ASIA/TEHRAN."
@@ -2365,7 +2938,8 @@ manage_advanced_warp_scanner() {
         
         log_message "INFO" "DOWNLOADING STABLE SCANNER VERSION FROM ${DOWNLOAD_URL}"
         
-        if ! curl -L --fail --connect-timeout 20 -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
+        if ! curl -fsSL --retry 3 --connect-timeout 20 --max-time 180 \
+            -o "$TEMP_FILE" "$DOWNLOAD_URL"; then
             log_message "WARN" "CURL FAILED. TRYING WGET AS A FALLBACK..."
             rm -f "$TEMP_FILE"
             if ! wget --timeout=20 -O "$TEMP_FILE" "$DOWNLOAD_URL"; then
@@ -2419,7 +2993,7 @@ manage_advanced_warp_scanner() {
     }
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- ADVANCED WARP SCANNER ---${C_RESET}\n"
         if [ -f "$SCANNER_BIN" ]; then
             echo -e "STATUS: ${G}INSTALLED${N}"
@@ -2441,7 +3015,7 @@ manage_advanced_warp_scanner() {
                 ;;
             2)
                 if [ -f "$SCANNER_BIN" ]; then
-                    clear
+                    clear_screen
                     log_message "INFO" "EXECUTING WARP SCANNER..."
                     echo -e "${B_YELLOW}RUNNING THE SCANNER... TO RETURN, EXIT FROM THE SCANNER'S OWN MENU.${N}\n"
                     (
@@ -2508,7 +3082,7 @@ manage_firewall() {
         local V6_DROP_RULE="-A ufw6-before-input ${ICMP_V6_PARAMS[*]} -j DROP"
 
         while true; do
-            clear
+            clear_screen
             echo -e "${B_CYAN}--- MANAGE SERVER PING (ICMP) ---${C_RESET}\n"
             local ping_status_val
             ping_status_val=$(check_ping_status)
@@ -2574,7 +3148,7 @@ manage_firewall() {
     _resolve_firewall_conflicts
     
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- FIREWALL MANAGEMENT (UFW) ---${C_RESET}\n"
         local UFW_STATUS
         if ufw status | grep -q "Status: active"; then
@@ -2620,7 +3194,7 @@ manage_firewall() {
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             3)
-                clear
+                clear_screen
                 echo -e "${B_CYAN}--- CURRENT FIREWALL STATUS AND RULES ---${C_RESET}\n"
                 ufw status verbose
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
@@ -2637,7 +3211,7 @@ manage_firewall() {
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             5) 
-                clear
+                clear_screen
                 echo -e "${B_CYAN}--- CURRENT RULES (FOR DELETION BY NUMBER) ---${C_RESET}\n"
                 ufw status numbered
                 printf "\n%b" "${B_MAGENTA}ENTER THE RULE NUMBER YOU WISH TO DELETE: ${C_RESET}"
@@ -2651,7 +3225,7 @@ manage_firewall() {
                 read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
                 ;;
             6) 
-                clear
+                clear_screen
                 echo -e "${B_CYAN}--- AUTO-ADDING CURRENTLY USED PORTS ---${C_RESET}\n"
                 local ssh_port
                 ssh_port=$(ss -lntp | grep sshd | awk '{print $4}' | sed 's/.*://' | head -n 1)
@@ -2706,7 +3280,7 @@ manage_abuse_defender() {
     local COMMENT_TAG="IRNET-ABUSE-DEFENDER"
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- ABUSE FIREWALL MANAGEMENT (UFW-BASED) ---${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "BLOCK ABUSE IP RANGES"
         printf "  ${C_YELLOW}%2d)${C_GREEN} %s\n" "2" "ADD AN IP TO THE WHITELIST"
@@ -2757,7 +3331,7 @@ manage_abuse_defender() {
                 fi
                 ;;
             4)
-                clear
+                clear_screen
                 echo -e "${B_CYAN}--- CURRENT UFW FIREWALL RULES ---${C_RESET}\n"
                 ufw status numbered
                 echo -e "\n${C_YELLOW}RULES ADDED BY THIS SCRIPT HAVE THE COMMENT '${COMMENT_TAG}'.${N}"
@@ -2809,8 +3383,8 @@ manage_xui_assistant() {
 
         if [[ ${#missing_deps[@]} -gt 0 ]]; then
             log_message "WARN" "INSTALLING MISSING DEPENDENCIES FOR ASSISTANT: ${missing_deps[*]}"
-            apt-get update -qq
-            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing_deps[@]}"; then
+            refresh_package_indexes
+            if ! install_packages "${missing_deps[@]}"; then
                 log_message "ERROR" "FAILED TO INSTALL DEPENDENCIES. CANNOT PROCEED."
                 return 1
             fi
@@ -2861,7 +3435,7 @@ manage_xui_assistant() {
     }
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- X-UI PANEL ASSISTANT MANAGEMENT (MULTI-ADMIN) ---${C_RESET}\n"
         
         if [ -f "$SYMLINK_PATH" ]; then
@@ -2894,7 +3468,7 @@ manage_xui_assistant() {
                 ;;
             4)
                 if [ -f "$SYMLINK_PATH" ]; then
-                    clear
+                    clear_screen
                     (
                         trap '' INT
                         "$SYMLINK_PATH"
@@ -2917,7 +3491,7 @@ manage_xui_assistant() {
 }
 
 manage_tc_script() {
-  clear
+  clear_screen
   echo -e "${B_CYAN}--- SPEED OPTIMIZATION (TC) ---${C_RESET}\n"
   printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "INSTALL AND TEST TC OPTIMIZATION SCRIPT"
   printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "UNINSTALL TC OPTIMIZATION SCRIPT"
@@ -2975,7 +3549,7 @@ EOF
 manage_custom_sysctl() {
     local conf_file="/etc/sysctl.d/98-custom-optimizer.conf"
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- CUSTOM SYSCTL OPTIMIZER ---${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "APPLY CUSTOM SETTINGS"
         printf "  ${C_YELLOW}%2d)${C_RED}   %s\n" "2" "REMOVE CUSTOM SETTINGS"
@@ -3056,7 +3630,7 @@ manage_tc_qleen_mtu() {
     local TC_SERVICE_FILE="/etc/systemd/system/irnet-tc-persistent.service"
 
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- CUSTOM QLEEN & MTU OPTIMIZER ---${C_RESET}"
         echo -e "DETECTED INTERFACE: ${B_YELLOW}${PRIMARY_INTERFACE}${N}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "APPLY CAKE PROFILE (TXQUEUELEN 500, MTU 1380)"
@@ -3133,7 +3707,7 @@ EOF
 }
 
 run_packet_loss_test() {
-    clear
+    clear_screen
     echo -e "${B_CYAN}--- PACKET LOSS, PING, AND NETWORK PATH TEST (MTR) ---${C_RESET}\n"
     if ! command -v mtr &> /dev/null || ! command -v jq &> /dev/null; then
         log_message "ERROR" "MTR AND JQ TOOLS ARE REQUIRED FOR THIS TEST. PLEASE INSTALL THEM."
@@ -3149,7 +3723,7 @@ run_packet_loss_test() {
         log_message "ERROR" "THE IP ADDRESS ENTERED IS NOT VALID."; sleep 2
         return
     fi
-    clear
+    clear_screen
     echo -e "${B_CYAN}--- PACKET LOSS, PING, AND NETWORK PATH TEST (MTR) ---${C_RESET}\n"
     echo -e "\n${C_YELLOW}RUNNING MTR TEST TO DESTINATION ${target_ip}... (THIS WILL TAKE ABOUT 1 MINUTE)${C_RESET}"
     echo -e "${C_CYAN}TO CANCEL THE TEST AND RETURN TO THE MENU, PRESS CTRL+C.${C_RESET}\n"
@@ -3192,39 +3766,40 @@ run_packet_loss_test() {
     final_loss=$(echo "$MTR_JSON" | jq -r '.report.hubs[-1]."Loss%"')
     final_avg_ping=$(echo "$MTR_JSON" | jq -r '.report.hubs[-1].Avg')
 
-    echo -e "${C_WHITE}▪️ PACKET LOSS AT ORIGIN (FIRST HOP):${N} ${Y}${first_hop_loss:-0}%${N}"
-    echo -e "${C_WHITE}▪️ PACKET LOSS TO FINAL DESTINATION:${N} ${Y}${final_loss:-0}%${N}"
-    echo -e "${C_WHITE}▪️ AVERAGE PING TO FINAL DESTINATION:${N} ${Y}${final_avg_ping:-0} MS${N}\n"
+    echo -e "${C_WHITE} PACKET LOSS AT ORIGIN (FIRST HOP):${N} ${Y}${first_hop_loss:-0}%${N}"
+    echo -e "${C_WHITE} PACKET LOSS TO FINAL DESTINATION:${N} ${Y}${final_loss:-0}%${N}"
+    echo -e "${C_WHITE} AVERAGE PING TO FINAL DESTINATION:${N} ${Y}${final_avg_ping:-0} MS${N}\n"
 
     if (( $(echo "$first_hop_loss > 10" | bc -l) )); then
-        echo -e " ${R}❌ RESULT: VERY POOR CONNECTION.${N}"
+        echo -e " ${R} RESULT: VERY POOR CONNECTION.${N}"
         echo -e "   REASON: SEVERE PACKET LOSS AT THE ORIGIN (${first_hop_loss}%) INDICATES A SERIOUS PROBLEM WITH THE SOURCE SERVER'S NETWORK."
         echo -e "   THIS SERVER IS NOT SUITABLE FOR TUNNELING."
     elif (( $(echo "$final_loss > 5" | bc -l) )); then
-        echo -e " ${R}❌ RESULT: VERY POOR CONNECTION.${N}"
+        echo -e " ${R} RESULT: VERY POOR CONNECTION.${N}"
         echo -e "   REASON: HIGH PACKET LOSS AT THE DESTINATION (${final_loss}%) WILL SEVERELY DISRUPT ANY TYPE OF TUNNEL."
     elif (( $(echo "$final_loss > 0" | bc -l) )); then
-        echo -e " ${Y}⚠️ RESULT: POOR CONNECTION.${N}"
+        echo -e " ${Y} RESULT: POOR CONNECTION.${N}"
         echo -e "   REASON: ANY PACKET LOSS AT THE DESTINATION (${final_loss}%) CAN CAUSE QUALITY DEGRADATION AND TEMPORARY DISCONNECTS."
         echo -e "   NOT RECOMMENDED FOR SENSITIVE TASKS LIKE GAMING OR VIDEO CALLS."
     elif (( $(echo "$final_avg_ping > 200" | bc -l) )); then
-        echo -e " ${B}🟡 RESULT: ACCEPTABLE, BUT WITH VERY HIGH LATENCY.${N}"
+        echo -e " ${B} RESULT: ACCEPTABLE, BUT WITH VERY HIGH LATENCY.${N}"
         echo -e "   PACKET LOSS IS 0%, WHICH IS EXCELLENT, BUT THE HIGH PING (${final_avg_ping}MS) MAY CAUSE SLOWNESS."
     else
-        echo -e " ${G}✅ RESULT: GOOD, STABLE CONNECTION.${N}"
+        echo -e " ${G} RESULT: GOOD, STABLE CONNECTION.${N}"
         echo -e "   PACKET LOSS IS 0% AND PING IS REASONABLE. THIS SERVER HAS GOOD QUALITY FOR TUNNELING."
     fi
 
     read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
 }
 advanced_mirror_test() {
-    clear
+    clear_screen
     log_message "INFO" "--- ADVANCED APT REPOSITORY ANALYSIS ---"
     
     test_mirror_speed() {
         local url="$1/ls-lR.gz"
         local speed_bytes_per_sec
-        speed_bytes_per_sec=$(curl -s -o /dev/null -w '%{speed_download}' --max-time 3 "$url" 2>/dev/null | cut -d'.' -f1)
+        speed_bytes_per_sec=$(curl -fsSL -o /dev/null -w '%{speed_download}' \
+            --connect-timeout 3 --max-time 8 "$url" 2>/dev/null | cut -d'.' -f1)
 
         if [[ -z "$speed_bytes_per_sec" || "$speed_bytes_per_sec" -lt 10240 ]]; then
             echo "0"
@@ -3278,9 +3853,9 @@ EOF
         
         log_message "INFO" "UPDATING PACKAGE LISTS..."
         if apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true; then
-            log_message "SUCCESS" "✅ REPOSITORY SUCCESSFULLY CHANGED TO $mirror_name AND PACKAGE LISTS UPDATED."
+            log_message "SUCCESS" " REPOSITORY SUCCESSFULLY CHANGED TO $mirror_name AND PACKAGE LISTS UPDATED."
         else
-            log_message "ERROR" "❌ FAILED TO UPDATE PACKAGE LISTS. PLEASE CHECK THE ISSUE MANUALLY."
+            log_message "ERROR" " FAILED TO UPDATE PACKAGE LISTS. PLEASE CHECK THE ISSUE MANUALLY."
         fi
     }
 
@@ -3299,67 +3874,15 @@ EOF
         apply_selected_mirror "$selected_mirror_url" "$selected_mirror_name"
     }
 
-    local mirrors=(
-        "https://mirrors.pardisco.co/ubuntu/" "http://mirror.aminidc.com/ubuntu/" "http://mirror.faraso.org/ubuntu/"
-        "https://ir.ubuntu.sindad.cloud/ubuntu/" "https://ubuntu-mirror.kimiahost.com/" "https://archive.ubuntu.petiak.ir/ubuntu/"
-        "https://ubuntu.hostiran.ir/ubuntuarchive/" "https://ubuntu.bardia.tech/" "https://mirror.iranserver.com/ubuntu/"
-        "https://ir.archive.ubuntu.com/ubuntu/" "https://mirror.0-1.cloud/ubuntu/" "http://linuxmirrors.ir/pub/ubuntu/"
-        "http://repo.iut.ac.ir/repo/Ubuntu/" "https://ubuntu.shatel.ir/ubuntu/" "http://ubuntu.byteiran.com/ubuntu/"
-        "https://mirror.rasanegar.com/ubuntu/" "http://mirrors.sharif.ir/ubuntu/" "http://mirror.ut.ac.ir/ubuntu/"
-        "http://archive.ubuntu.com/ubuntu/"
-		  "http://mirror.arvancloud.ir/ubuntu"
-		  "https://archive.ubuntu.petiak.ir/ubuntu/"
-		  "http://repo.iut.ac.ir/repo/Ubuntu/"
-		  "https://mirrors.pardisco.co/ubuntu/"
-		  "http://mirror.aminidc.com/ubuntu/"
-		  "http://mirror.faraso.org/ubuntu/"
-		  "https://ir.ubuntu.sindad.cloud/ubuntu/"
-		  "https://ubuntu-mirror.kimiahost.com/"
-		  "https://ubuntu.hostiran.ir/ubuntuarchive/"
-		  "https://ubuntu.bardia.tech/"
-		  "https://mirror.iranserver.com/ubuntu/"
-		  "https://ir.archive.ubuntu.com/ubuntu/"
-		  "https://mirror.0-1.cloud/ubuntu/"
-		  "http://linuxmirrors.ir/pub/ubuntu/"
-		  "https://ubuntu.shatel.ir/ubuntu/"
-		  "http://ubuntu.byteiran.com/ubuntu/"
-		  "https://mirror.rasanegar.com/ubuntu/"
-		  "http://mirrors.sharif.ir/ubuntu/"
-		  "http://mirror.ut.ac.ir/ubuntu/"
-		  "http://repo.iut.ac.ir/repo/ubuntu/"
-		  "http://mirror.asiatech.ir/ubuntu/"
-		  "http://mirror.iranserver.com/ubuntu/"
-		  "http://archive.ubuntu.com/ubuntu/"
-		  "https://mirror.iranserver.com"
-		  "https://arvancloud.ir/dev/linux-repository"
-		  "https://repo.iut.ac.ir"
-		  "https://mirrors.pardisco.co"
-		  "https://ubuntu.pishgaman.net"
-		  "https://afranet.com"
-		  "https://ir.ubuntu.sindad.cloud"
-		  "https://mirror.aminidc.com"
-		  "https://ir.archive.ubuntu.com"
-		  "https://mirror.shatel.ir"
-		  "https://parsdev.com"
-		  "https://abrha.net"
-		  "https://mirror.mobinhost.com"
-		  "https://mirror.iranserver.com"
-		  "https://www.arvancloud.ir/en/dev/linux-repository"
-		  "https://mirror.nyist.edu.cn/"
-		  "https://mirror.atlantiscloud.ir/"
-		  "https://mirrors.pardisco.co"
-		  "https://mirror.yandex.ru/"
-		  "https://mirrors.ustc.edu.cn/"
-		  "https://mirrors.huaweicloud.com/home"
-		  "https://mirrors.tuna.tsinghua.edu.cn/"
-		  
-		  
-		  
-    )
+    local mirrors=("${APT_MIRRORS[@]}")
     mirrors=($(printf "%s\n" "${mirrors[@]}" | sort -u))
 
     echo -e "${Y}PHASE 1: TESTING SPEEDS OF ${#mirrors[@]} REPOSITORIES...${N}"
-    local temp_speed_file="/tmp/mirror_speeds_$$"
+    local temp_speed_file="${SCRIPT_TMP_DIR:-$SCRIPT_TMP_ROOT}/mirror_speeds"
+    : > "$temp_speed_file" || {
+        log_message "ERROR" "FAILED TO CREATE MIRROR TEST OUTPUT FILE."
+        return 1
+    }
     
     (
         trap '' INT
@@ -3426,7 +3949,7 @@ EOF
 
 port_scanner_menu() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- PORT SCANNER (NMAP) ---${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "QUICK SCAN (1000 MOST COMMON PORTS)"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "FULL SCAN (ALL PORTS - VERY SLOW)"
@@ -3480,13 +4003,13 @@ show_current_dns_smart() {
     if [ -z "$dns_servers" ]; then
         echo "  (NOT FOUND)"
     else
-        echo "$dns_servers" | tr ' ' '\n' | awk '{print "  • " $1}'
+        echo "$dns_servers" | tr ' ' '\n' | awk '{print "   " $1}'
     fi
     echo
 }
 
 manage_sanction_dns() {
-    clear
+    clear_screen
     echo -e "${B_CYAN}--- ANTI-SANCTION DNS ---${C_RESET}\n"
 
     local -a providers=("SHECAN" "RADAR" "ELECTRO" "BEGZAR" "DNS PRO" "403" "GOOGLE" "CLOUDFLARE" "RESET TO DEFAULT")
@@ -3533,7 +4056,7 @@ manage_sanction_dns() {
 
 manage_ip_health_check() {
     while true; do
-        clear
+        clear_screen
         echo -e "${B_CYAN}--- IP HEALTH CHECK ---${C_RESET}\n"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "TEST 1 (IP.CHECK.PLACE)"
         printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "TEST 2 (BENCH.OPENODE.XYZ)"
@@ -3544,9 +4067,9 @@ manage_ip_health_check() {
         read -e -r choice
 
         case $choice in
-            1) (trap '' INT; clear; log_message "INFO" "RUNNING TEST 1..."; bash <(curl -Ls IP.Check.Place) -l en -4); break ;;
-            2) (trap '' INT; clear; log_message "INFO" "RUNNING TEST 2..."; bash <(curl -L -s https://bench.openode.xyz/multi_check.sh)); break ;;
-            3) (trap '' INT; clear; log_message "INFO" "RUNNING TEST 3..."; bash <(curl -L -s https://git.io/JRw8R) -E en -M 4); break ;;
+            1) (trap '' INT; clear; log_message "INFO" "RUNNING TEST 1..."; bash <(curl -fsSL --retry 2 --connect-timeout 15 --max-time 120 https://IP.Check.Place) -l en -4); break ;;
+            2) (trap '' INT; clear; log_message "INFO" "RUNNING TEST 2..."; bash <(curl -fsSL --retry 2 --connect-timeout 15 --max-time 120 https://bench.openode.xyz/multi_check.sh)); break ;;
+            3) (trap '' INT; clear; log_message "INFO" "RUNNING TEST 3..."; bash <(curl -fsSL --retry 2 --connect-timeout 15 --max-time 120 https://git.io/JRw8R) -E en -M 4); break ;;
             4) return ;;
             *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
         esac
@@ -3555,7 +4078,7 @@ manage_ip_health_check() {
 }
 
 manage_ssh_port() {
-    clear
+    clear_screen
     local sshd_config="/etc/ssh/sshd_config"
     local ssh_service_name="ssh"
     systemctl status sshd >/dev/null 2>&1 && ssh_service_name="sshd"
@@ -3592,7 +4115,7 @@ manage_ssh_port() {
 }
 
 manage_xray_auto_restart() {
-    clear
+    clear_screen
     echo -e "${B_CYAN}--- AUTO-RESTART XRAY SERVICE ---${C_RESET}\n"
     local xray_service=""
     local possible_services=("xray.service" "x-ui.service" "tx-ui.service")
@@ -3639,7 +4162,7 @@ manage_xray_auto_restart() {
 }
 
 scan_arvan_ranges() {
-    clear
+    clear_screen
     log_message "INFO" "--- SCANNING ARVAN CLOUD IP RANGES (PING TEST) ---"
     if ! command -v fping &>/dev/null; then
         log_message "ERROR" "FPING TOOL IS REQUIRED FOR THIS SCAN. ATTEMPTING TO INSTALL..."
@@ -3697,7 +4220,7 @@ scan_arvan_ranges() {
 }
 
 scan_warp_endpoints() {
-    clear
+    clear_screen
     log_message "INFO" "--- SCANNING WARP ENDPOINTS ---"
     if ! command -v ncat &>/dev/null; then
         log_message "WARN" "NCAT TOOL (PART OF NMAP) NOT FOUND. ATTEMPTING TO INSTALL..."
@@ -3758,147 +4281,148 @@ scan_warp_endpoints() {
     log_message "SUCCESS" "WARP ENDPOINT SCAN COMPLETED."
     read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
 }
-# --- SCRIPT MAIN MENUS (UPDATED) ---
+# --- SCRIPT MAIN MENUS ---
+
+run_menu() {
+    local title="$1"
+    local description="$2"
+    shift 2
+    local -a menu_items=("$@")
+    local choice action index numeric_choice
+
+    while true; do
+        clear_screen
+        stty sane 2>/dev/null || true
+        printf '%b\n\n' "${B_CYAN}--- ${title} ---${C_RESET}"
+        printf '%b\n\n' "${C_WHITE}${description}${C_RESET}"
+
+        for ((index = 0; index < ${#menu_items[@]}; index += 2)); do
+            printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" \
+                "$((index / 2 + 1))" "${menu_items[index]}"
+        done
+        echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
+        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"
+        if ! read_choice choice "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; then
+            return 1
+        fi
+
+        if [[ "$choice" =~ ^[0-9]+$ ]]; then
+            numeric_choice=$((10#$choice))
+        else
+            numeric_choice=0
+        fi
+        if (( numeric_choice >= 1 && numeric_choice <= ${#menu_items[@]} / 2 )); then
+            action="${menu_items[((numeric_choice - 1) * 2 + 1)]}"
+            [[ "$action" == "__return__" ]] && return 0
+            if ! "$action"; then
+                log_message "WARN" "MENU ACTION '$action' FAILED."
+                pause_screen
+            fi
+        else
+            printf "\n%b\n" "${C_RED}INVALID OPTION!${C_RESET}"
+            sleep 1
+        fi
+    done
+}
 
 manage_advanced_tools() {
-    while true; do
-        clear
-        stty sane
-        echo -e "${B_CYAN}--- ADVANCED & WEB TOOLS ---${C_RESET}\n"
-        echo -e "${C_WHITE}THIS MENU CONTAINS ADVANCED TOOLS LIKE DOCKER, CADDY WEB SERVER, AND UTILITIES FOR SSL & GEO-IP.${C_RESET}\n"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "1" "INSTALL & MANAGE DOCKER"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "2" "MANAGE CADDY WEB SERVER (WITH AUTO SSL)"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "3" "MANAGE SSL CERTIFICATES WITH CERTBOT"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "4" "BLOCK BY GEOGRAPHICAL LOCATION (GEO-IP)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "5" "RETURN TO MAIN MENU"
-        echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
-        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
-
-        case $choice in
-            1) manage_docker ;;
-            2) manage_caddy ;;
-            3) manage_certbot ;;
-            4) manage_geoip_blocking ;;
-            5) return ;;
-            *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
-        esac
-    done
+    run_menu "ADVANCED & WEB TOOLS" \
+        "DOCKER, CADDY, SSL CERTIFICATES, AND GEO-IP UTILITIES." \
+        "INSTALL & MANAGE DOCKER" manage_docker \
+        "MANAGE CADDY WEB SERVER (WITH AUTO SSL)" manage_caddy \
+        "MANAGE SSL CERTIFICATES WITH CERTBOT" manage_certbot \
+        "BLOCK BY GEOGRAPHICAL LOCATION (GEO-IP)" manage_geoip_blocking \
+        "RETURN TO MAIN MENU" __return__
 }
 
 manage_network_optimization() {
-    while true; do
-        clear
-        stty sane
-        echo -e "${B_CYAN}--- NETWORK & CONNECTION OPTIMIZATION ---${C_RESET}\n"
-        echo -e "${C_WHITE}IN THIS SECTION, YOU CAN OPTIMIZE NETWORK SETTINGS, DNS, TCP ALGORITHMS, AND SOFTWARE REPOSITORIES.${C_RESET}\n"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "MANAGE TCP OPTIMIZERS (BBR, HYBLA, CUBIC)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "CUSTOM SYSCTL OPTIMIZER"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "CUSTOM QLEEN & MTU OPTIMIZER (PERSISTENT)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "4" "FIX WHATSAPP DATE & TIME ISSUE"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "5" "SPEED OPTIMIZATION (TC)"
-        printf "  ${C_YELLOW}%2d)${B_YELLOW} %s\n" "6" "NETWORK STACK OPTIMIZATION (ADVANCED & PERSISTENT)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "7" "MANAGE AND FIND BEST DNS"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "8" "FIND FASTEST APT REPOSITORY (ADVANCED)"
-        printf "  ${C_YELLOW}%2d)${B_WHITE} %s\n" "9" "INTER-SERVER PACKET LOSS TEST (MTR)"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "10" "ANTI-SANCTION DNS"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "11" "RETURN TO MAIN MENU"
-        echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
-        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
-
-        case $choice in
-            1) manage_tcp_optimizers ;; 2) manage_custom_sysctl ;; 3) manage_tc_qleen_mtu ;;
-            4) fix_whatsapp_time ;; 5) manage_tc_script ;; 6) run_as_bbr_optimization ;; 
-            7) manage_dns ;; 8) advanced_mirror_test ;; 9) run_packet_loss_test ;; 
-            10) manage_sanction_dns ;; 11) return ;;
-            *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
-        esac
-    done
+    run_menu "NETWORK & CONNECTION OPTIMIZATION" \
+        "NETWORK SETTINGS, DNS, TCP ALGORITHMS, AND SOFTWARE REPOSITORIES." \
+        "MANAGE TCP OPTIMIZERS (BBR, HYBLA, CUBIC)" manage_tcp_optimizers \
+        "CUSTOM SYSCTL OPTIMIZER" manage_custom_sysctl \
+        "CUSTOM QLEEN & MTU OPTIMIZER (PERSISTENT)" manage_tc_qleen_mtu \
+        "FIX WHATSAPP DATE & TIME ISSUE" fix_whatsapp_time \
+        "SPEED OPTIMIZATION (TC)" manage_tc_script \
+        "NETWORK STACK OPTIMIZATION (ADVANCED & PERSISTENT)" run_as_bbr_optimization \
+        "MANAGE AND FIND BEST DNS" manage_dns \
+        "FIND FASTEST APT REPOSITORY (ADVANCED)" advanced_mirror_test \
+        "MIRAVA MIRROR & DNS CHECKER" mirava_mirror_tools \
+        "INTER-SERVER PACKET LOSS TEST (MTR)" run_packet_loss_test \
+        "ANTI-SANCTION DNS" manage_sanction_dns \
+        "RETURN TO MAIN MENU" __return__
 }
 
 manage_security() {
-    while true; do
-        clear
-        stty sane
-        echo -e "${B_CYAN}--- SECURITY & ACCESS ---${C_RESET}\n"
-        echo -e "${C_WHITE}A COLLECTION OF SECURITY TOOLS TO MANAGE FIREWALLS, ACCESS, SCANNERS, AND PROTECT YOUR SERVER.${C_RESET}\n"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "FIREWALL & PING MANAGEMENT (UFW)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "MANAGE ROOT USER LOGIN"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "CHANGE SSH PORT"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "4" "CHANGE SERVER PASSWORD"
-        printf "  ${C_YELLOW}%2d)${B_YELLOW} %s\n" "5" "ABUSE DEFENDER"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "6" "X-UI PANEL ASSISTANT (MULTI-ADMIN)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "7" "AUTO-RESTART XRAY"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "8" "MANAGE AUTOMATIC SERVER REBOOT"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "9" "ENABLE/DISABLE IPV6"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "10" "PORT SCANNER"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "11" "MALWARE SCANNERS"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "12" "SECURITY AUDIT WITH LYNIS"
-        printf "  ${C_YELLOW}%2d)${B_GREEN} %s\n" "13" "ADVANCED WARP SCANNER"
-        printf "  ${C_YELLOW}%2d)${B_YELLOW} %s\n" "14" "SCAN ARVAN CLOUD RANGES"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "15" "IP HEALTH CHECK"
-        printf "  ${C_YELLOW}%2d)${B_YELLOW} %s\n" "16" "SCAN WARP ENDPOINTS"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "17" "RETURN TO MAIN MENU"
-        echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
-        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
-
-        case $choice in
-            1) manage_firewall ;; 2) manage_ssh_root ;; 3) manage_ssh_port ;; 4) change_server_password ;;
-            5) manage_abuse_defender ;; 6) manage_xui_assistant ;; 7) manage_xray_auto_restart ;; 
-            8) manage_reboot_cron ;; 9) manage_ipv6 ;; 10) port_scanner_menu ;;
-            11) manage_malware_scanners ;; 12) manage_lynis_audit ;;
-            13) manage_advanced_warp_scanner ;; 14) scan_arvan_ranges ;; 15) manage_ip_health_check ;; 
-            16) scan_warp_endpoints ;; 17) return ;;
-            *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
-        esac
-    done
+    run_menu "SECURITY & ACCESS" \
+        "FIREWALLS, ACCESS CONTROL, SCANNERS, AND SERVER PROTECTION." \
+        "FIREWALL & PING MANAGEMENT (UFW)" manage_firewall \
+        "MANAGE ROOT USER LOGIN" manage_ssh_root \
+        "CHANGE SSH PORT" manage_ssh_port \
+        "CHANGE SERVER PASSWORD" change_server_password \
+        "ABUSE DEFENDER" manage_abuse_defender \
+        "X-UI PANEL ASSISTANT (MULTI-ADMIN)" manage_xui_assistant \
+        "AUTO-RESTART XRAY" manage_xray_auto_restart \
+        "MANAGE AUTOMATIC SERVER REBOOT" manage_reboot_cron \
+        "ENABLE/DISABLE IPV6" manage_ipv6 \
+        "PORT SCANNER" port_scanner_menu \
+        "MALWARE SCANNERS" manage_malware_scanners \
+        "SECURITY AUDIT WITH LYNIS" manage_lynis_audit \
+        "ADVANCED WARP SCANNER" manage_advanced_warp_scanner \
+        "SCAN ARVAN CLOUD RANGES" scan_arvan_ranges \
+        "IP HEALTH CHECK" manage_ip_health_check \
+        "SCAN WARP ENDPOINTS" scan_warp_endpoints \
+        "RETURN TO MAIN MENU" __return__
 }
 
 manage_monitoring_diagnostics() {
-    while true; do
-        clear
-        stty sane
-        echo -e "${B_CYAN}--- MONITORING & DIAGNOSTIC TOOLS ---${C_RESET}\n"
-        echo -e "${C_WHITE}TOOLS FOR LIVE MONITORING OF SYSTEM RESOURCES, NETWORK TRAFFIC, AND DISK SPACE ANALYSIS.${C_RESET}\n"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "ADVANCED RESOURCE MONITORING (BTOP/HTOP)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "DISK USAGE ANALYZER (NCDU)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "LIVE NETWORK TRAFFIC MONITOR (IFTOP)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "4" "RETURN TO MAIN MENU"
-        echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
-        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
-
-        case $choice in
-            1) manage_system_monitors ;;
-            2) manage_disk_analyzer ;;
-            3) manage_network_traffic ;;
-            4) return ;;
-            *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
-        esac
-    done
+    run_menu "MONITORING & DIAGNOSTIC TOOLS" \
+        "LIVE MONITORING OF SYSTEM RESOURCES, NETWORK TRAFFIC, AND DISK SPACE." \
+        "ADVANCED RESOURCE MONITORING (BTOP/HTOP)" manage_system_monitors \
+        "DISK USAGE ANALYZER (NCDU)" manage_disk_analyzer \
+        "LIVE NETWORK TRAFFIC MONITOR (IFTOP)" manage_network_traffic \
+        "RETURN TO MAIN MENU" __return__
 }
 
 manage_system_tools() {
-    while true; do
-        clear
-        stty sane
-        echo -e "${B_CYAN}--- SYSTEM & UTILITY TOOLS ---${C_RESET}\n"
-        echo -e "${C_WHITE}INCLUDES SYSTEM MANAGEMENT TOOLS SUCH AS SWAP MANAGEMENT AND DISK CLEANUP.${C_RESET}\n"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "1" "MANAGE SWAP MEMORY"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "2" "SYSTEM CLEANUP (FREE UP SPACE)"
-        printf "  ${C_YELLOW}%2d)${C_WHITE} %s\n" "3" "RETURN TO MAIN MENU"
-        echo -e "${B_BLUE}----------------------------------------------------${C_RESET}"
-        printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; read -e -r choice
+    run_menu "SYSTEM & UTILITY TOOLS" \
+        "SWAP MANAGEMENT AND DISK CLEANUP UTILITIES." \
+        "MANAGE SWAP MEMORY" manage_swap \
+        "SYSTEM CLEANUP (FREE UP SPACE)" manage_system_cleanup \
+        "RETURN TO MAIN MENU" __return__
+}
 
-        case $choice in
-            1) manage_swap ;;
-            2) manage_system_cleanup ;;
-            3) return ;;
-            *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; sleep 1 ;;
-        esac
+mirava_mirror_catalog() {
+    clear_screen
+    printf '%b\n\n' "${B_CYAN}--- MIRAVA INTEGRATED LIVE CATALOG ---${C_RESET}"
+    printf '%b\n\n' "${C_WHITE}CATALOG SOURCES ARE THE CURRENT UHELPER CONFIGURATION, NOT A STATIC LEGACY LIST.${C_RESET}"
+    local index
+    printf '%b\n' "${C_YELLOW}CURRENT APT/UBUNTU MIRRORS (${#APT_MIRRORS[@]}):${C_RESET}"
+    for index in "${!APT_MIRRORS[@]}"; do
+        printf "  ${C_YELLOW}%3d)${C_WHITE} %s\n" \
+            "$((index + 1))" "${APT_MIRRORS[index]}"
     done
+    printf '\n%b\n' "${C_YELLOW}CURRENT DOCKER REGISTRY MIRRORS (${#DOCKER_REGISTRY_MIRRORS[@]}):${C_RESET}"
+    for index in "${!DOCKER_REGISTRY_MIRRORS[@]}"; do
+        printf "  ${C_YELLOW}%3d)${C_WHITE} %s\n" \
+            "$((index + 1))" "${DOCKER_REGISTRY_MIRRORS[index]}"
+    done
+    pause_screen
+}
+
+mirava_mirror_tools() {
+    run_menu "MIRAVA FEATURES (INTEGRATED)" \
+        "MIRAVA CAPABILITIES REUSED THROUGH UHELPER'S NATIVE SERVICES." \
+        "BENCHMARK & APPLY FASTEST UBUNTU APT MIRROR" advanced_mirror_test \
+        "BENCHMARK & APPLY FASTEST DOCKER REGISTRY MIRROR" benchmark_docker_registry_mirrors \
+        "BENCHMARK LOCAL/GLOBAL DNS" manage_dns \
+        "VIEW CURRENT MIRROR/DNS/DOCKER CATALOG" mirava_mirror_catalog \
+        "INSTALL ALL REQUIRED PACKAGES" install_dependencies \
+        "INSTALL DOCKER & DOCKER COMPOSE" manage_docker \
+        "RETURN TO NETWORK MENU" __return__
 }
 
 update_and_install_packages() {
-    clear
+    clear_screen
     log_message "INFO" "--- INTERACTIVE UPDATE AND INSTALLATION PROCESS ---"
     
     echo -e "${B_CYAN}--- UPDATE AND INSTALL PACKAGES (WITH STEP-BY-STEP CONFIRMATION) ---${C_RESET}\n"
@@ -3944,30 +4468,16 @@ update_and_install_packages() {
         local missing_deps=()
 
         for dep in "${deps_to_check[@]}"; do
-            local cmd_name="$dep"
-            [[ "$dep" == "dnsutils" ]] && cmd_name="dig"
-            [[ "$dep" == "net-tools" ]] && cmd_name="ifconfig"
-            [[ "$dep" == "mtr-tiny" ]] && cmd_name="mtr"
-            [[ "$dep" == "netcat-openbsd" ]] && cmd_name="nc"
-            [[ "$dep" == "uuid-runtime" ]] && cmd_name="uuidgen"
-            [[ "$dep" == "iptables-persistent" ]] && cmd_name="netfilter-persistent"
-            [[ "$dep" == "xtables-addons-common" ]] && cmd_name="xtables-addons-info"
-
-            if ! command -v "$cmd_name" &>/dev/null; then
-                 if [[ "$dep" == "netcat-openbsd" ]] && (command -v "ncat" >/dev/null || command -v "netcat" >/dev/null); then
-                    continue
-                fi
+            if ! package_is_available "$dep"; then
                 missing_deps+=("$dep")
             fi
         done
 
         if [ ${#missing_deps[@]} -gt 0 ]; then
             echo -e "\n${C_WHITE}THE '${group_title}' GROUP REQUIRES THE FOLLOWING PACKAGES:${N} ${C_CYAN}${missing_deps[*]}${N}"
-            printf "%b" "${C_YELLOW}DO YOU WANT TO INSTALL THESE PACKAGES? (Y/N): ${C_RESET}"
-            read -e -r install_choice
-            if [[ "$install_choice" =~ ^[yY]$ ]]; then
+            if confirm_installation "INSTALL THESE PACKAGES"; then
                 log_message "INFO" "INSTALLING GROUP: ${group_title}"
-                if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing_deps[@]}"; then
+                if ! refresh_package_indexes || ! install_packages "${missing_deps[@]}"; then
                     log_message "ERROR" "FAILED TO INSTALL SOME DEPENDENCIES IN GROUP: ${group_title}"
                 else
                     log_message "SUCCESS" "GROUP '${group_title}' INSTALLED SUCCESSFULLY."
@@ -3986,6 +4496,7 @@ update_and_install_packages() {
     local monitoring_deps=("htop" "btop" "ncdu" "iftop")
     local web_deps=("certbot")
     local advanced_deps=("mtr-tiny" "iperf3" "jq" "netcat-openbsd" "nmap" "fping" "python3" "python3-pip")
+    local docker_deps=("docker.io" "docker-compose")
 
     _install_group_if_confirmed "CORE & ESSENTIAL TOOLS" "${core_deps[@]}"
     _install_group_if_confirmed "SOCAT (FOR NETWORK CONNECTIONS)" "${socat_dep[@]}"
@@ -3993,21 +4504,23 @@ update_and_install_packages() {
     _install_group_if_confirmed "MONITORING TOOLS" "${monitoring_deps[@]}"
     _install_group_if_confirmed "WEB & SSL TOOLS" "${web_deps[@]}"
     _install_group_if_confirmed "ADVANCED NETWORK TOOLS" "${advanced_deps[@]}"
+    _install_group_if_confirmed "DOCKER & CONTAINER TOOLS" "${docker_deps[@]}"
 
-    echo -e "\n${B_GREEN}✅ PREREQUISITE CHECK AND INSTALLATION PROCESS FINISHED.${N}"
+    echo -e "\n${B_GREEN} PREREQUISITE CHECK AND INSTALLATION PROCESS FINISHED.${N}"
     read -n 1 -s -r -p $'\n'"${R}PRESS ANY KEY TO CONTINUE...${N}"
 }
 
 
 # --- SCRIPT MAIN LOOP ---
 main() {
-    init_environment
-    clear
+    require_root || return 1
+    init_environment || return 1
+    clear_screen
     progress_bar "LOADING SCRIPT..." 2
 
     while true; do
-      stty sane 
-      clear; show_banner; show_enhanced_system_status
+      stty sane 2>/dev/null || true
+      clear_screen; show_banner; show_enhanced_system_status
       printf "   ${C_YELLOW}%2d) ${B_CYAN}%s\n" "1" "NETWORK & CONNECTION OPTIMIZATION"
       printf "   ${C_YELLOW}%2d) ${B_CYAN}%s\n" "2" "SECURITY & ACCESS"
       printf "   ${C_YELLOW}%2d) ${B_CYAN}%s\n" "3" "MONITORING & DIAGNOSTIC TOOLS"
@@ -4020,7 +4533,9 @@ main() {
       printf "\n   ${C_YELLOW}%2d) ${C_RED}%s\n" "10" "EXIT"
       echo -e "${B_BLUE}------------------------------------------------------------${C_RESET}"
       printf "%b" "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"
-      read -e -r main_choice
+      if ! read_choice main_choice "${B_MAGENTA}PLEASE SELECT AN OPTION: ${C_RESET}"; then
+          break
+      fi
 
       case $main_choice in
         1) manage_network_optimization ;;
@@ -4033,13 +4548,15 @@ main() {
         8) manage_txui_panel ;;
         9) manage_3xui_panel ;;
 		
-        10) clear; log_message "INFO" "EXITING SCRIPT."; echo -e "\n${B_CYAN}GOODBYE!${C_RESET}\n"; stty sane; exit 0 ;;
-        *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; read -n 1 -s -r -p "" ;;
+        10) clear_screen; log_message "INFO" "EXITING SCRIPT."; echo -e "\n${B_CYAN}GOODBYE!${C_RESET}\n"; stty sane 2>/dev/null || true; return 0 ;;
+        *) echo -e "\n${C_RED}INVALID OPTION!${C_RESET}"; pause_screen ;;
       esac
     done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
 # ###########################################################################
 # --- END OF SCRIPT ---
 # ###########################################################################
