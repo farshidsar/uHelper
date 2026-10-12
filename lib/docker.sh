@@ -47,5 +47,5 @@ uh_docker_apply_mirrors() {
         systemctl restart docker || { uh_docker_restore_config; systemctl restart docker || true; return 1; }
         uh_docker_systemd_health || { uh_docker_restore_config; systemctl restart docker || true; return 1; }
     fi
-    uh_docker_pull_test
+    uh_docker_pull_test "hello-world:latest"
 }
