@@ -50,6 +50,8 @@ systems. Distribution-specific actions may still require manual review.
 - Docker Engine, Buildx, and Docker Compose plugin installation
 - Distribution-package fallback when official packages are unavailable
 - Docker service enable/start and Compose verification
+- Docker Registry mirror latency benchmarking and automatic fastest-mirror
+  application through `/etc/docker/daemon.json`
 - Editable Docker registry mirror catalog
 
 ### Security and server tools
@@ -69,6 +71,32 @@ systems. Distribution-specific actions may still require manual review.
 - Service status checks
 - Structured log output and temporary-file cleanup
 
+### Complete menu inventory
+
+The interactive menus currently include the following operational tools:
+
+- **Network:** TCP optimizer profiles (BBR, HYBLA, CUBIC), custom persistent
+  sysctl tuning, QLEEN/MTU optimization, traffic-control optimization,
+  WhatsApp date/time repair, DNS provider switching, DNS benchmarking, IPv6
+  control, packet-loss/MTR testing, anti-sanction DNS, Ubuntu APT mirror
+  benchmarking, integrated Mirava tools, IP health checks, and WARP endpoint
+  scans.
+- **Security and access:** UFW firewall and ping control, root-login
+  management, SSH-port changes, password changes, abuse defense, X-UI
+  multi-admin assistant, Xray auto-restart, scheduled reboot, port scanning,
+  malware/rootkit scanning, Lynis audits, GeoIP blocking, advanced WARP
+  scanning, and Arvan Cloud range scanning.
+- **Advanced/web:** Docker and container management, Docker Compose
+  verification, live Docker Registry mirror benchmarking and application,
+  Caddy, Certbot, GeoIP tools, TX-UI, 3X-UI, and related web/panel helpers.
+- **Monitoring:** btop/htop resource monitoring, ncdu disk analysis, and
+  iftop live traffic monitoring.
+- **System utilities:** swap management, system cleanup, service operations,
+  package updates, grouped dependency installation, and environment recovery.
+
+Some integrations download or execute third-party projects. They are optional,
+network-dependent, and should be reviewed before use.
+
 ## Requirements
 
 - Ubuntu 20.04 or newer is recommended.
@@ -80,16 +108,17 @@ systems. Distribution-specific actions may still require manual review.
 
 ## Installation
 
-To use only the script, download it first and then execute it. This lets the portable launcher install missing bootstrap dependencies and restart itself with Bash when necessary:
+### Quick installation (single script)
+
+Download the script directly and run it with root privileges:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
 chmod +x uHelper.sh
-./uHelper.sh
+sudo ./uHelper.sh
 ```
 
-OR
-
+### Installation from Git
 
 Clone the repository and enter its directory:
 
@@ -104,6 +133,10 @@ Run it as root:
 ```bash
 sudo bash ./uHelper.sh
 ```
+
+When a dependency group is missing, uHelper asks before installing it. The
+default is **Yes**, so pressing Enter accepts the installation; type `n` or
+`no` to skip it.
 
 The script intentionally does not run its menu when it is sourced, so helper
 functions can be inspected or tested safely:
@@ -126,6 +159,8 @@ Review it before the first run. Important variables include:
 | `DOCKER_GPG_URL` | Docker signing-key URL |
 | `APT_MIRRORS` | Ubuntu mirrors used for benchmarking |
 | `DOCKER_REGISTRY_MIRRORS` | Docker registry mirror catalog |
+| `DOCKER_MIRROR_TIMEOUT` | Timeout used by Docker mirror probes |
+| `DOCKER_DAEMON_CONFIG` | Docker daemon JSON configuration path |
 | `TARGET_DNS` | Default DNS target list |
 | `DNS_SWITCHER_PROVIDERS` | DNS provider names |
 | `DNS_SWITCHER_SERVERS` | Provider-to-server mappings |
@@ -148,8 +183,9 @@ The main menu currently provides:
 9. Install/update 3X-UI
 
 The integrated Mirava menu reuses native uHelper functions for mirror
-benchmarking, DNS management, package installation, Docker installation, and
-catalog display. The original Mirava files are not required at runtime.
+benchmarking, Docker Registry mirror benchmarking and application, DNS
+management, package installation, Docker installation, and live catalog
+display. The original Mirava files are not required at runtime.
 
 ## Logs, backups, and generated files
 
@@ -167,6 +203,32 @@ catalog display. The original Mirava files are not required at runtime.
 - Verify the selected mirror and repository before applying it.
 - Do not run the script with unreviewed third-party modifications.
 - Test backups and recovery procedures before production use.
+
+## Development roadmap
+
+Planned improvements are intentionally focused on reliability and safe
+operations:
+
+1. Split the monolithic Bash file into testable modules while preserving the
+   one-file portable launcher.
+2. Add non-interactive flags and a dry-run mode for automation and CI.
+3. Add structured JSON logging, operation IDs, and clearer failure reports.
+4. Add a real mirror catalog schema with freshness checks, region metadata,
+   package type, TLS validation, and automatic stale-entry removal.
+5. Improve Docker mirror verification with pull tests, daemon configuration
+   validation, rollback, and systemd health checks.
+6. Add shellcheck, bats-core tests, CI syntax checks, and mocked package/network
+   integration tests.
+7. Add privilege-aware support for Ubuntu/Debian first, then document tested
+   Fedora/RHEL/Alpine behavior instead of implying full portability.
+8. Add configuration import/export, versioned backups, and transactional
+   rollback for DNS, APT, Docker, firewall, and SSH changes.
+9. Add localization infrastructure so menu text and README terminology stay
+   synchronized.
+10. Add release tags, checksums, signed releases, and a changelog.
+
+Contributions should include a reproducible test command and documentation for
+any new system-changing operation.
 
 ## Validation
 

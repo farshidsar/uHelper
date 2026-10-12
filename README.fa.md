@@ -26,9 +26,25 @@ Compose، ابزارهای امنیتی و نگهداری سرور را یکپا
 - تست و اعمال سریع‌ترین Ubuntu APT mirror
 - قابلیت‌های Mirava به‌صورت native و بدون نیاز به فایل خارجی هنگام اجرا
 - نصب Docker Engine، Buildx و Docker Compose plugin با fallback توزیع
+- تست latency آدرس‌های Docker Registry و اعمال سریع‌ترین mirror در
+  `/etc/docker/daemon.json`
 - مدیریت فایروال، Fail2ban، Lynis، ابزارهای malware/rootkit و ابزارهای امنیتی
 - ابزارهای Caddy، Certbot، TX-UI، 3X-UI، Xray و WARP
 - مانیتورینگ CPU، RAM، دیسک و ترافیک شبکه، مدیریت Swap و پاک‌سازی سیستم
+
+### فهرست کامل منوها
+
+- **شبکه:** پروفایل‌های BBR، HYBLA و CUBIC، تنظیمات پایدار sysctl، بهینه‌سازی
+  QLEEN و MTU، traffic control، اصلاح مشکل تاریخ WhatsApp، تعویض و benchmark
+  DNS، مدیریت IPv6، تست packet loss و MTR، anti-sanction DNS، benchmark
+  mirrorهای APT و Docker Registry، ابزارهای Mirava، بررسی سلامت IP و WARP.
+- **امنیت:** مدیریت UFW و ping، root login، تغییر پورت SSH و رمز عبور، abuse
+  defense، restart خودکار Xray، reboot زمان‌بندی‌شده، port scanner، اسکن
+  malware/rootkit، audit با Lynis، GeoIP، WARP و rangeهای Arvan.
+- **ابزارهای پیشرفته:** Docker و containerها، Docker Compose، Caddy، Certbot،
+  TX-UI، 3X-UI و ابزارهای پنل.
+- **مانیتورینگ و سیستم:** btop/htop، ncdu، iftop، مدیریت Swap، cleanup،
+  سرویس‌ها، update پکیج‌ها و نصب گروهی dependencyها.
 
 ## پیش‌نیازها
 
@@ -39,14 +55,19 @@ Compose، ابزارهای امنیتی و نگهداری سرور را یکپا
 
 ## نصب و اجرا
 
+### نصب سریع با یک دستور
+
+برای دریافت مستقیم اسکریپت و اجرای آن:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/farshidsar/uHelper/refs/heads/main/uHelper.sh -o uHelper.sh
 chmod +x uHelper.sh
-./uHelper.sh
+sudo ./uHelper.sh
 ```
 
-یا
+اسکریپت را مستقیماً دانلود و با دسترسی root اجرا کنید.
+
+### نصب از طریق Git
 
 ```bash
 git clone https://github.com/farshidsar/uHelper.git
@@ -54,6 +75,9 @@ cd uHelper
 chmod +x uHelper.sh
 sudo bash ./uHelper.sh
 ```
+
+هنگام نصب dependencyها، مقدار پیش‌فرض **Yes** است؛ یعنی با زدن Enter نصب
+تأیید می‌شود. برای رد کردن، `n` یا `no` وارد کنید.
 
 برای بررسی helperها بدون اجرای منو:
 
@@ -70,6 +94,8 @@ source ./uHelper.sh
 - `DOCKER_REPOSITORY_URL` و `DOCKER_GPG_URL`: repository و کلید Docker
 - `APT_MIRRORS`: فهرست mirrorهای Ubuntu
 - `DOCKER_REGISTRY_MIRRORS`: فهرست mirrorهای Docker
+- `DOCKER_MIRROR_TIMEOUT`: زمان timeout تست mirrorهای Docker
+- `DOCKER_DAEMON_CONFIG`: مسیر تنظیمات JSON مربوط به Docker
 - `TARGET_DNS`: DNS پیش‌فرض
 - `DNS_SWITCHER_PROVIDERS` و `DNS_SWITCHER_SERVERS`: providerها و آدرس DNS
 - `PROJECT_GITHUB_URL`: آدرس نمایش‌داده‌شده داخل برنامه
@@ -82,6 +108,14 @@ source ./uHelper.sh
 - backup: `/var/backups/network_optimizer`
 - تنظیمات پایدار: `/etc/irnet`
 - temporary files: دایرکتوری خصوصی در `/tmp`
+
+## برنامه توسعه
+
+برنامه‌های بعدی شامل ماژولار کردن فایل Bash بدون از دست دادن launcher تک‌فایلی،
+افزودن dry-run و حالت غیرتعاملی، لاگ JSON و operation ID، catalog mirror با
+بررسی freshness و TLS، rollback تراکنشی برای DNS/APT/Docker/firewall/SSH،
+تست‌های ShellCheck و Bats، CI، پشتیبانی مستند از توزیع‌های بیشتر، import/export
+تنظیمات، releaseهای امضاشده و changelog است.
 
 ## بررسی صحت
 
