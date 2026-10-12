@@ -1,5 +1,21 @@
 #!/usr/bin/env bash
 
+# Modular automation layer. The legacy interactive menu below remains intact
+# and keeps this file usable as a portable one-file launcher.
+UH_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$UH_SCRIPT_DIR/lib/logging.sh" ]]; then
+    # shellcheck source=lib/logging.sh
+    . "$UH_SCRIPT_DIR/lib/logging.sh"
+    # shellcheck source=lib/platform.sh
+    . "$UH_SCRIPT_DIR/lib/platform.sh"
+    # shellcheck source=lib/mirrors.sh
+    . "$UH_SCRIPT_DIR/lib/mirrors.sh"
+    # shellcheck source=lib/docker.sh
+    . "$UH_SCRIPT_DIR/lib/docker.sh"
+    # shellcheck source=lib/cli.sh
+    . "$UH_SCRIPT_DIR/lib/cli.sh"
+fi
+
 # This script intentionally avoids `set -e`: most menu actions are optional and
 # report their own failures. `set -u` is also not safe for legacy menu inputs.
 
@@ -4555,7 +4571,11 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-    main "$@"
+    if (($#)) && [[ -f "$UH_SCRIPT_DIR/lib/cli.sh" ]]; then
+        uh_cli_main "$@"
+    else
+        main "$@"
+    fi
 fi
 # ###########################################################################
 # --- END OF SCRIPT ---

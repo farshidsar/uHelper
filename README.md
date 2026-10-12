@@ -9,6 +9,7 @@ repository/mirror testing, and common server maintenance tasks.
 - Author: [farshidsar](https://github.com/farshidsar)
 - Repository: [github.com/farshidsar/uHelper](https://github.com/farshidsar/uHelper)
 - Main script: [`uHelper.sh`](./uHelper.sh)
+- Modular automation library: [`lib/`](./lib/)
 - Languages: [فارسی](./README.fa.md) · [العربية](./README.ar.md) · [Русский](./README.ru.md) · [简体中文](./README.zh-CN.md)
 
 > **Important:** This script changes system networking, package, firewall, DNS,
@@ -242,6 +243,37 @@ Source-only smoke test:
 
 ```bash
 bash -c 'source ./uHelper.sh; package_command dnsutils; command_exists bash'
+```
+
+### Automation and CI mode
+
+The interactive menu remains available, while automation can use the
+non-interactive modular CLI:
+
+```bash
+bash uHelper.sh --dry-run --non-interactive --log-format json \
+  --operation-id mirror-check --check-mirrors \
+  https://archive.ubuntu.com/ubuntu/
+```
+
+Available operations include `--check-mirrors`, `--prune-mirrors`, and
+`--docker-mirrors`. Mirror records are stored as JSON Lines with URL, region,
+package type, TLS status, and freshness timestamps. Stale records are removed
+by `--prune-mirrors`. Docker updates validate `daemon.json`, back it up, check
+systemd health, run a pull test, and roll back on failure.
+
+The launcher remains usable as a portable one-file interactive script when the
+optional `lib/` directory is not present. The modular CLI requires Bash and
+`curl`; `jq` is recommended for strict Docker JSON validation.
+
+Ubuntu and Debian are the supported platforms for system-changing operations.
+Fedora/RHEL and Alpine are detected and reported as documented-but-not-fully-
+supported targets rather than being presented as fully portable.
+
+```bash
+bash -n uHelper.sh lib/*.sh
+shellcheck lib/*.sh
+bats tests/bats
 ```
 
 ## Contributing
